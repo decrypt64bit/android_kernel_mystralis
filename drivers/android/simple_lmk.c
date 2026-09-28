@@ -50,7 +50,7 @@ static atomic_t nr_killed = ATOMIC_INIT(0);
  * reclaim pressure during boot is far cheaper than mass killing, so hold off
  * killing until this many milliseconds have elapsed since LMK start.
  */
-static unsigned int boot_grace_ms __read_mosty = 90000;
+static unsigned int boot_grace_ms __read_mostly = 90000;
 module_param(boot_grace_ms, uint, 0644);
 MODULE_PARM_DESC(boot_grace_ms,
 		 "Milliseconds after LMK start during which no process is killed. "
@@ -65,13 +65,13 @@ MODULE_PARM_DESC(boot_grace_ms,
  * plain reclaim. Any continuing pressure still triggers: the count is reset
  * only by a notification reporting pressure below 100.
  */
-static unsigned int pressure_min_streak __read_mosty = 3;
+static unsigned int pressure_min_streak __read_mostly = 3;
 module_param(pressure_min_streak, uint, 0644);
 MODULE_PARM_DESC(pressure_min_streak,
 		 "Number of pressure==100 notifications required before killing. "
 		 "1 = react to the first one. 0 = disabled (same as 1)");
 
-static unsigned int pressure_window_ms __read_mosty = 2000;
+static unsigned int pressure_window_ms __read_mostly = 2000;
 module_param(pressure_window_ms, uint, 0644);
 MODULE_PARM_DESC(pressure_window_ms,
 		 "If this much time passes between pressure==100 notifications, "
