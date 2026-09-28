@@ -42,9 +42,12 @@
 #define DRV_COPYRIGHT	"(C) 1999-2004 Max Krasnyansky <maxk@qualcomm.com>"
 
 #include <linux/module.h>
+#include <linux/moduleparam.h>
 #include <linux/errno.h>
 #include <linux/kernel.h>
 #include <linux/major.h>
+#include <linux/delay.h>
+#include <linux/jiffies.h>
 #include <linux/slab.h>
 #include <linux/poll.h>
 #include <linux/fcntl.h>
@@ -587,11 +590,64 @@ static void __tun_detach(struct tun_file *tfile, bool clean)
 	}
 }
 
+static unsigned int tun_force_detach_ms __read_mostly = 5000;
+module_param(tun_force_detach_ms, uint, 0644);
+MODULE_PARM_DESC(tun_force_detach_ms,
+		 "Max milliseconds to wait for rtnl_lock during TUN detach. On "
+		 "timeout the detach is skipped so a stuck TUN/VPN close cannot "
+		 "hang userspace forever. 0 restores the legacy unbounded wait");
+
+/*
+ * Khaenriah: bounded rtnl_lock acquisition for the TUN teardown path.
+ *
+ * A wedged TUN/VPN teardown must never block userspace indefinitely. On
+ * Android a VPN service that hangs inside close() never tears its VpnService
+ * down, so ConnectivityService keeps the VPN policy routing rules installed
+ * (including the "unreachable" catch-all) and the device ends up blackholed
+ * with no WiFi/cellular/hotspot until a reboot rebuilds the rule set.
+ *
+ * Returns true if the caller now holds rtnl_lock. On timeout it deliberately
+ * leaves the lock alone and the caller must not touch any TUN state.
+ */
+static bool tun_rtnl_lock_bounded(void)
+{
+	unsigned int timeout = READ_ONCE(tun_force_detach_ms);
+	unsigned long deadline;
+
+	/* Legacy behaviour when explicitly disabled. */
+	if (!timeout) {
+		rtnl_lock();
+		return true;
+	}
+
+	deadline = jiffies + msecs_to_jiffies(timeout);
+	do {
+		if (rtnl_trylock())
+			return true;
+		msleep(1);
+		cond_resched();
+	} while (time_before(jiffies, deadline));
+
+	pr_warn("rtnl_lock busy for %u ms, skipping detach to unblock userspace\n",
+		timeout);
+
+	return false;
+}
+
 static void tun_detach(struct tun_file *tfile, bool clean)
 {
-	rtnl_lock();
-	__tun_detach(tfile, clean);
-	rtnl_unlock();
+	if (likely(tun_rtnl_lock_bounded())) {
+		__tun_detach(tfile, clean);
+		rtnl_unlock();
+	}
+	/*
+	 * Timeout path: rtnl_lock stayed contended past the budget, so skip
+	 * the detach instead of blocking forever. This driver never frees
+	 * tfile on close, so bailing out leaks nothing extra and leaves all
+	 * TUN state consistent for the owner to retry. The point is that
+	 * close() returns, letting the VPN app finish shutting down so the
+	 * framework can drop its policy routing rules.
+	 */
 }
 
 static void tun_detach_all(struct net_device *dev)
