@@ -824,9 +824,16 @@ CONFIG_FORCE_FAST_CHARGE=y
 # tracepoint+kretprobe hook is used instead. arm64 already selects
 # HAVE_SYSCALL_TRACEPOINTS and KPROBES pulls in KRETPROBES, so this is
 # satisfiable without any extra source patches.
+# KernelSU hookless configuration (backslashxx v3.3.0-52)
+# KSUN's legacy line is built for 5.9+ (it needs linux/compiler_types.h and
+# linux/sched/signal.h, both introduced in 5.9) and cannot compile on 4.9.
+# This driver is explicitly verified for 3.0-4.14 and needs no kprobes.
 CONFIG_KSU=y
-CONFIG_KPROBES=y
-CONFIG_KPROBE_EVENTS=y
-CONFIG_KSU_KPROBES_HOOK=y
-# CONFIG_KSU_MANUAL_HOOK is not set
+# CONFIG_KPROBES is not set
+# CONFIG_KSU_KPROBES_KSUD is not set
+CONFIG_KSU_TAMPER_SYSCALL_TABLE=y
+CONFIG_KSU_LSM_SECURITY_HOOKS=y
+CONFIG_KSU_FEATURE_SULOG=y
+CONFIG_KSU_FEATURE_ADBROOT=y
+CONFIG_KSU_EXTRAS=y
 CONFIG_KSU_DEBUG=n
