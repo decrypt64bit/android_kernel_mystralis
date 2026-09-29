@@ -17,7 +17,7 @@ env:
   DEVICE_CODENAME: "RMX1971"
   KERNEL_DEFCONFIG: "sdm670-perf_defconfig"
   KERNEL_IMAGE: "Image.gz-dtb"
-  KERNEL_NAME: "Mystralis"
+  KERNEL_NAME: "Mystralis-5Pro"
   KERNEL_VARIANT: "mystralis"
   PROTON_CLANG_REPO: "https://github.com/kdrag0n/proton-clang.git"
   ANYKERNEL_REPO: "https://github.com/dain09/AnyKernel3.git"
