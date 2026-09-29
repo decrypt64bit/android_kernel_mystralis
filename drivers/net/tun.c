@@ -578,8 +578,23 @@ static void __tun_detach(struct tun_file *tfile, bool clean)
 		if (tun && tun->numqueues == 0 && tun->numdisabled == 0) {
 			netif_carrier_off(tun->dev);
 
+			/*
+			 * Only tear the device down when it can finish
+			 * immediately. If anything still references it,
+			 * unregister_netdevice() parks in
+			 * netdev_wait_allrefs() holding rtnl_lock(),
+			 * which hangs the process doing close() and takes
+			 * the whole network stack down with it - the VPN
+			 * app stops responding and WiFi, hotspot and
+			 * netlink all block behind rtnl_lock().
+			 *
+			 * So skip the teardown when references remain.
+			 * close() returns at once, and the next attach
+			 * reuses the device.
+			 */
 			if (!(tun->flags & IFF_PERSIST) &&
-			    tun->dev->reg_state == NETREG_REGISTERED)
+			    tun->dev->reg_state == NETREG_REGISTERED &&
+			    !netdev_refcnt_read(tun->dev))
 				unregister_netdevice(tun->dev);
 		}
 		tun_cleanup_tx_array(tfile);
