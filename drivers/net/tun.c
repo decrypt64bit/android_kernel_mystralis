@@ -568,42 +568,23 @@ static void tun_cleanup_tx_array(struct tun_file *tfile)
  * interface is recoverable, a dead network stack is not.
  */
 static struct workqueue_struct *tun_unregister_wq;
-static unsigned int tun_unregister_retries __read_mostly = 15;
-module_param(tun_unregister_retries, uint, 0644);
-MODULE_PARM_DESC(tun_unregister_retries,
-		 "Seconds to keep trying the deferred netdev teardown after a "
-		 "detach. Once exhausted the interface is left registered. 0 = give "
-		 "up immediately");
 
 static void tun_unregister_work(struct work_struct *work)
 {
 	struct tun_struct *tun = container_of(work, struct tun_struct,
 					      unregister_work);
-	struct net_device *dev = tun->dev;
-	unsigned int max = READ_ONCE(tun_unregister_retries);
-	unsigned int i;
 
 	/*
-	 * Sleep here rather than requeueing: we are a kthread holding no
-	 * locks, so waiting costs nothing that anyone is blocked on. Requeue
-	 * a work item from inside its own handler to avoid the racy dance
-	 * with the pending bit.
+	 * Always initiate the teardown. Do not gate this on the reference
+	 * count: the references held by a VPN's routes are released *by* the
+	 * unregister that flushes those routes, so waiting for the count to
+	 * reach zero first is a condition that can never be satisfied.
+	 *
+	 * Running here rather than in close() keeps the user thread out of
+	 * netdev_wait_allrefs(), which parks in msleep(250) and holds
+	 * rtnl_lock() - that is what used to freeze the whole network stack.
 	 */
-	for (i = 0; i < max; i++) {
-		if (!netdev_refcnt_read(dev)) {
-			unregister_netdevice(dev);
-			return;
-		}
-		msleep(1000);
-	}
-
-	if (!netdev_refcnt_read(dev)) {
-		unregister_netdevice(dev);
-		return;
-	}
-
-	pr_warn("dev %s still referenced (count %d) after %u seconds, leaving it registered\n",
-		dev->name, netdev_refcnt_read(dev), max);
+	unregister_netdevice(tun->dev);
 }
 
 static void tun_queue_unregister(struct tun_struct *tun)
