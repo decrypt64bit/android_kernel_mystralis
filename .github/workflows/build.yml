@@ -25,8 +25,6 @@ env:
   KERNELSU_SETUP_BRANCH: legacy
   KBUILD_BUILD_USER: "@decrypt64bit"
   KBUILD_BUILD_HOST: "ubuntu-24.04"
-  PRE_SLMK_BASE: "e76d43ca50b2c5c27fe73cc90cb66f277a247835"
-  LAST_SLMK_COMMIT: "a689b95814639e79cc2067458f48e01f3c4774b2"
 
 jobs:
   build:
@@ -35,6 +33,9 @@ jobs:
     permissions:
       contents: read
     strategy:
+      # Without this, one variant failing cancels the other, and since the
+      # release job needs the whole matrix it would never publish.
+      fail-fast: false
       matrix:
         variant:
           - kernel_version: "ascension-SLMK"
@@ -47,12 +48,15 @@ jobs:
           # Shallow checkout is enough (no rebase); speeds up CI a lot.
           fetch-depth: 1
 
-      - name: Drop Simple LMK commits via rebase
+      - name: Switch non-SLMK variant to classic LMK
         if: ${{ matrix.variant.kernel_version == 'ascension' }}
         run: |
-          git config user.email "action@github.com"
-          git config user.name "GitHub Action"
-          git rebase --onto $PRE_SLMK_BASE $LAST_SLMK_COMMIT
+          # The rebase this replaced could not replay on the current tree and
+          # needs full history, which conflicts with the shallow checkout.
+          # Switch the defconfig instead: same result, no history rewriting.
+          ./scripts/config --file arch/arm64/configs/$KERNEL_DEFCONFIG \
+            --disable ANDROID_SIMPLE_LMK \
+            --enable ANDROID_LOW_MEMORY_KILLER
 
       - name: Restore ccache
         uses: hendrikmuhs/ccache-action@v1.2.23
@@ -156,9 +160,14 @@ jobs:
   release:
     name: Publish Release (${{ matrix.variant.kernel_version }})
     needs: build
-    if: ${{ github.event.inputs.publish_release == 'true' }}
+    # Accept the checkbox from the UI and a string from the API/gh CLI, so a
+    # release is published whichever way the run was triggered.
+    if: >-
+      ${{ (inputs.publish_release == true)
+          || (github.event.inputs.publish_release == 'true') }}
     runs-on: ubuntu-24.04
     strategy:
+      fail-fast: false
       matrix:
         variant:
           - kernel_version: "ascension-SLMK"
@@ -170,14 +179,53 @@ jobs:
         uses: actions/download-artifact@v8
         with:
           name: kernel-build-artifacts-${{ matrix.variant.kernel_version }}
-          path: .
+          path: release
 
       - name: Create Release
         uses: softprops/action-gh-release@v3
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          tag_name: Khaenriah-${{ matrix.variant.kernel_version }}-${{ github.run_number }}
-          name: Khaenriah-${{ matrix.variant.kernel_version }}-${{ github.run_number }}
+          tag_name: Rebel-${{ matrix.variant.kernel_version }}-${{ github.run_number }}
+          name: Rebel-${{ matrix.variant.kernel_version }}-${{ github.run_number }}
+          fail_on_unmatched_files: true
+          body: |
+            **Rebel** kernel for Realme 2 Pro (RMX1971, SDM670, kernel 4.9.337).
+
+            Variant: `${{ matrix.variant.kernel_version }}` (run #${{ github.run_number }})
+
+            | | |
+            |---|---|
+            | Device | Realme 2 Pro (RMX1971) |
+            | SoC | Qualcomm SDM670 |
+            | Kernel | 4.9.337-Rebel |
+            | Defconfig | `sdm670-perf_defconfig` |
+            | Toolchain | proton-clang (kdrag0n) |
+            | Root | KernelSU-Next (legacy) |
+
+            ### Install
+            Flash `*.zip` from the assets via AnyKernel3 from a custom recovery.
+
+            ### Requirements and warnings
+            - **Back up your data and stock `boot.img` first.** A kernel flash
+              can brick a device, and a bad flash can make userdata
+              undecryptable.
+            - Built and tested on a **4 GB / 128 GB** unit.
+
+            ### Known issues
+            - KernelSU-Next v3.4.0 targets 4.17+ for its syscall-table hook and
+              notes its kprobe hook is for 5.10+. This is a 4.9 kernel, so
+              **root may not work** on this build. If the manager reports
+              unsupported or is not integrated, that is the reason.
+            - A VPN app that fails to tear down cleanly can leave a stale
+              interface behind. The kernel sweeps unused TUN interfaces, but a
+              wedged app may still need a reboot.
+            - OTA updates are untested and may not work.
+
+            ### Credits
+            - dain09 — `android_kernel_realme_sdm710`, AnyKernel3
+            - Sultan Alsawaf — Simple LMK
+            - KernelSU-Next — KernelSU
+            - kdrag0n — proton-clang
           files: |
-            *.zip
-            kernel.config
+            release/*.zip
+            release/kernel.config
