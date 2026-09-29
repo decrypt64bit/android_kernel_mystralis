@@ -38,8 +38,9 @@ jobs:
       # Without this, one variant failing cancels the other, and since the
       # release job needs the whole matrix it would never publish.
       fail-fast: false
-    strategy:
-
+      matrix:
+        variant:
+          - kernel_version: "ascension-SLMK"
           - kernel_version: "ascension"
 
     steps:
@@ -165,11 +166,10 @@ jobs:
           || (github.event.inputs.publish_release == 'true') }}
     runs-on: ubuntu-24.04
     strategy:
-      # Without this, one variant failing cancels the other, and since the
-      # release job needs the whole matrix it would never publish.
       fail-fast: false
-    strategy:
-
+      matrix:
+        variant:
+          - kernel_version: "ascension-SLMK"
           - kernel_version: "ascension"
     permissions:
       contents: write
@@ -178,7 +178,7 @@ jobs:
         uses: actions/download-artifact@v8
         with:
           name: kernel-build-artifacts-${{ matrix.variant.kernel_version }}
-          path: .
+          path: release
 
       - name: Create Release
         uses: softprops/action-gh-release@v3
@@ -186,6 +186,45 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           tag_name: Rebel-${{ matrix.variant.kernel_version }}-${{ github.run_number }}
           name: Rebel-${{ matrix.variant.kernel_version }}-${{ github.run_number }}
+          fail_on_unmatched_files: true
+          body: |
+            **Rebel** kernel for Realme 2 Pro (RMX1971, SDM670, kernel 4.9.337).
+
+            Variant: `${{ matrix.variant.kernel_version }}` (run #${{ github.run_number }})
+
+            | | |
+            |---|---|
+            | Device | Realme 2 Pro (RMX1971) |
+            | SoC | Qualcomm SDM670 |
+            | Kernel | 4.9.337-Rebel |
+            | Defconfig | `sdm670-perf_defconfig` |
+            | Toolchain | proton-clang (kdrag0n) |
+            | Root | KernelSU-Next (legacy) |
+
+            ### Install
+            Flash `*.zip` from the assets via AnyKernel3 from a custom recovery.
+
+            ### Requirements and warnings
+            - **Back up your data and stock `boot.img` first.** A kernel flash
+              can brick a device, and a bad flash can make userdata
+              undecryptable.
+            - Built and tested on a **4 GB / 128 GB** unit.
+
+            ### Known issues
+            - KernelSU-Next v3.4.0 targets 4.17+ for its syscall-table hook and
+              notes its kprobe hook is for 5.10+. This is a 4.9 kernel, so
+              **root may not work** on this build. If the manager reports
+              unsupported or is not integrated, that is the reason.
+            - A VPN app that fails to tear down cleanly can leave a stale
+              interface behind. The kernel sweeps unused TUN interfaces, but a
+              wedged app may still need a reboot.
+            - OTA updates are untested and may not work.
+
+            ### Credits
+            - dain09 — `android_kernel_realme_sdm710`, AnyKernel3
+            - Sultan Alsawaf — Simple LMK
+            - KernelSU-Next — KernelSU
+            - kdrag0n — proton-clang
           files: |
-            *.zip
-            kernel.config
+            release/*.zip
+            release/kernel.config
