@@ -1689,6 +1689,10 @@ static int do_execveat_common(int fd, struct filename *filename,
 	struct file *file;
 	struct files_struct *displaced;
 	int retval;
+#ifdef CONFIG_KSU_MANUAL_HOOK
+	void *hook_argv;
+	void *hook_envp;
+#endif
 
 	if (IS_ERR(filename))
 		return PTR_ERR(filename);
@@ -1699,8 +1703,27 @@ static int do_execveat_common(int fd, struct filename *filename,
 	 * handles the ksud exec. This is the path that makes su work, since
 	 * there is no setuid su binary to rely on. Must run after the filename
 	 * has been resolved so the handler can compare and patch it.
+	 *
+	 * argv/envp arrive as struct user_arg_ptr, whose ptr member is an
+	 * anonymous union of native/compat in this kernel. The driver only
+	 * takes an opaque void * and does not dereference it, so select the
+	 * member the same way count() and get_user_arg_ptr() do.
 	 */
-	if (unlikely(ksu_handle_execveat(&fd, &filename, argv.ptr, envp.ptr,
+#ifdef CONFIG_COMPAT
+	if (argv.is_compat)
+		hook_argv = argv.ptr.compat;
+	else
+#endif
+		hook_argv = argv.ptr.native;
+
+#ifdef CONFIG_COMPAT
+	if (envp.is_compat)
+		hook_envp = envp.ptr.compat;
+	else
+#endif
+		hook_envp = envp.ptr.native;
+
+	if (unlikely(ksu_handle_execveat(&fd, &filename, hook_argv, hook_envp,
 					&flags)))
 		return 0;
 #endif
