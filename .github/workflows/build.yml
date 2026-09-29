@@ -37,6 +37,9 @@ jobs:
     permissions:
       contents: read
     strategy:
+      # Without this, one variant failing cancels the other, and since the
+      # release job needs the whole matrix it would never publish.
+      fail-fast: false
       matrix:
         variant:
           - kernel_version: "ascension-SLMK"
@@ -161,9 +164,14 @@ jobs:
   release:
     name: Publish Release (${{ matrix.variant.kernel_version }})
     needs: build
-    if: ${{ github.event.inputs.publish_release == 'true' }}
+    # Accept the checkbox from the UI and a string from the API/gh CLI, so a
+    # release is published whichever way the run was triggered.
+    if: >-
+      ${{ (inputs.publish_release == true)
+          || (github.event.inputs.publish_release == 'true') }}
     runs-on: ubuntu-24.04
     strategy:
+      fail-fast: false
       matrix:
         variant:
           - kernel_version: "ascension-SLMK"
@@ -175,14 +183,50 @@ jobs:
         uses: actions/download-artifact@v8
         with:
           name: kernel-build-artifacts-${{ matrix.variant.kernel_version }}
-          path: .
+          path: release
 
       - name: Create Release
         uses: softprops/action-gh-release@v3
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          tag_name: Khaenriah-${{ matrix.variant.kernel_version }}-${{ github.run_number }}
-          name: Khaenriah-${{ matrix.variant.kernel_version }}-${{ github.run_number }}
+          tag_name: Mystralis-${{ matrix.variant.kernel_version }}-${{ github.run_number }}
+          name: Mystralis-${{ matrix.variant.kernel_version }}-${{ github.run_number }}
+          fail_on_unmatched_files: true
+          body: |
+            **Mystralis** kernel for Realme 2 Pro (RMX1971, SDM670, kernel 4.9.337).
+
+            Variant: `${{ matrix.variant.kernel_version }}` (run #${{ github.run_number }})
+
+            | | |
+            |---|---|
+            | Device | Realme 2 Pro (RMX1971) |
+            | SoC | Qualcomm SDM670 |
+            | Kernel | 4.9.337-Mystralis |
+            | Defconfig | `sdm670-perf_defconfig` |
+            | Toolchain | proton-clang (kdrag0n) |
+            | Root | KernelSU (hookless) |
+
+            ### Install
+            Flash `*.zip` from the assets via AnyKernel3 from a custom recovery.
+
+            ### Requirements and warnings
+            - **Back up your data and stock `boot.img` first.** A kernel flash
+              can brick a device, and a bad flash can make userdata
+              undecryptable.
+            - Built and tested on a **4 GB / 128 GB** unit. Other RAM/storage
+              configurations will behave differently.
+
+            ### Known issues
+            - A VPN app that fails to tear down cleanly can still leave a
+              stale interface behind. The kernel now sweeps unused TUN
+              interfaces, but a wedged app may need a reboot.
+            - OTA updates are untested and may not work.
+
+            ### Credits
+            - dain09 — `android_kernel_realme_sdm710`, AnyKernel3
+            - Sultan Alsawaf — Simple LMK
+            - backslashxx — KernelSU (hookless)
+            - kdrag0n — proton-clang
           files: |
-            *.zip
-            kernel.config
+            release/*.zip
+            release/kernel.config
