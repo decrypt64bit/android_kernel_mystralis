@@ -99,7 +99,9 @@ jobs:
           #   sched/types.h, sched/user.h       -> split out of sched.h
           #   pgtable.h                         -> arch specific, use asm/
           #   hex.h                             -> include is unused, drop it
+          #   uapi/linux/sched/types.h          -> split out of uapi/linux/sched.h
           #
+          # linux/sched/task.h is left alone: this kernel already has it.
           # linux/version.h needs no change: the kernel Makefile generates it
           # from VERSION/PATCHLEVEL, so LINUX_VERSION_CODE is available.
           find kernel -name '*.[ch]' -exec sed -i \
@@ -108,16 +110,17 @@ jobs:
             -e 's|<linux/sched/task_stack\.h>|<linux/sched.h>|g' \
             -e 's|<linux/sched/types\.h>|<linux/sched.h>|g' \
             -e 's|<linux/sched/user\.h>|<linux/sched.h>|g' \
+            -e 's|<uapi/linux/sched/types\.h>|<uapi/linux/sched.h>|g' \
             -e 's|<linux/pgtable\.h>|<asm/pgtable.h>|g' \
             -e '/#include <linux\/hex\.h>/d' {} +
 
-          # Fail loudly if any 5.9+ only include survived the rewrite.
-          if grep -rEn 'linux/(compiler_types|hex|pgtable)\.h|linux/sched/' \
+          # Fail loudly if any include that does not exist on 4.9 survived.
+          if grep -rEn 'linux/(compiler_types|hex|pgtable)\.h|linux/sched/(signal|task_stack|types|user)\.h|uapi/linux/sched/types\.h' \
                kernel --include='*.c' --include='*.h'; then
-            echo "::error::5.9+ only includes remain in the KSUN tree"
+            echo "::error::headers missing on 4.9 remain in the KSUN tree"
             exit 1
           fi
-          echo "KSUN 4.9 header backport: no 5.9+ only includes remain"
+          echo "KSUN 4.9 header backport: clean"
 
       - name: Configure and Build Kernel
         env:
