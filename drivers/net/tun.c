@@ -2751,7 +2751,7 @@ static struct notifier_block tun_notifier_block __read_mostly = {
  * accumulate. Only interfaces with no attached queue are touched, so a live
  * VPN is never disturbed.
  */
-static unsigned int tun_reaper_interval __read_mosty = 20;
+static unsigned int tun_reaper_interval __read_mostly = 20;
 module_param(tun_reaper_interval, uint, 0644);
 MODULE_PARM_DESC(tun_reaper_interval,
 		 "Seconds between sweeps that unregister unused tun interfaces. "
@@ -2759,7 +2759,10 @@ MODULE_PARM_DESC(tun_reaper_interval,
 
 static void tun_reap_work(struct work_struct *work);
 
-static struct delayed_work tun_reaper = INIT_DELAYED_WORK(tun_reap_work);
+/* 4.9 has no INIT_DELAYED_WORK(); use DECLARE_DELAYED_WORK, which wires up
+ * both the work_struct and the timer that queue_delayed_work() expects.
+ */
+DECLARE_DELAYED_WORK(tun_reaper, tun_reap_work);
 
 static void tun_reap_work(struct work_struct *work)
 {
