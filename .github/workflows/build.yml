@@ -21,8 +21,8 @@ env:
   KERNEL_VARIANT: "rebel"
   PROTON_CLANG_REPO: "https://github.com/kdrag0n/proton-clang.git"
   ANYKERNEL_REPO: "https://github.com/dain09/AnyKernel3.git"
-  KERNELSU_SETUP: "https://raw.githubusercontent.com/dain09/KernelSU/refs/heads/hookless/kernel/setup.sh"
-  KERNELSU_SETUP_BRANCH: v3.3.0-52
+  KERNELSU_SETUP: "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh"
+  KERNELSU_SETUP_BRANCH: v3.4.0-legacy
   KBUILD_BUILD_USER: "@decrypt64bit"
   KBUILD_BUILD_HOST: "ubuntu-24.04"
 
@@ -79,13 +79,13 @@ jobs:
         run: |
           git clone --depth 1 -b r5p $ANYKERNEL_REPO .deps/AnyKernel3
 
-      - name: Integrate KernelSU (hookless)
+      - name: Integrate KernelSU-Next (legacy)
         run: |
           curl -LSs "$KERNELSU_SETUP" | bash -s $KERNELSU_SETUP_BRANCH
           # setup.sh silently falls back to the default branch when its
           # checkout fails ("Checkout default branch"), so enforce the pin
           # explicitly. The step fails loudly if this doesn't work.
-          cd KernelSU
+          cd KernelSU-Next
           git fetch origin "$KERNELSU_SETUP_BRANCH" || git fetch origin
           git checkout "$KERNELSU_SETUP_BRANCH"
           git rev-parse HEAD
