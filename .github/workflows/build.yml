@@ -35,9 +35,11 @@ jobs:
     permissions:
       contents: read
     strategy:
-      matrix:
-        variant:
-          - kernel_version: "ascension-SLMK"
+      # Without this, one variant failing cancels the other, and since the
+      # release job needs the whole matrix it would never publish.
+      fail-fast: false
+    strategy:
+
           - kernel_version: "ascension"
 
     steps:
@@ -156,12 +158,18 @@ jobs:
   release:
     name: Publish Release (${{ matrix.variant.kernel_version }})
     needs: build
-    if: ${{ github.event.inputs.publish_release == 'true' }}
+    # Accept the checkbox from the UI and a string from the API/gh CLI, so a
+    # release is published whichever way the run was triggered.
+    if: >-
+      ${{ (inputs.publish_release == true)
+          || (github.event.inputs.publish_release == 'true') }}
     runs-on: ubuntu-24.04
     strategy:
-      matrix:
-        variant:
-          - kernel_version: "ascension-SLMK"
+      # Without this, one variant failing cancels the other, and since the
+      # release job needs the whole matrix it would never publish.
+      fail-fast: false
+    strategy:
+
           - kernel_version: "ascension"
     permissions:
       contents: write
@@ -176,8 +184,8 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          tag_name: Khaenriah-${{ matrix.variant.kernel_version }}-${{ github.run_number }}
-          name: Khaenriah-${{ matrix.variant.kernel_version }}-${{ github.run_number }}
+          tag_name: Rebel-${{ matrix.variant.kernel_version }}-${{ github.run_number }}
+          name: Rebel-${{ matrix.variant.kernel_version }}-${{ github.run_number }}
           files: |
             *.zip
             kernel.config
