@@ -17,7 +17,12 @@ env:
   DEVICE_CODENAME: "RMX1971"
   KERNEL_DEFCONFIG: "sdm670-perf_defconfig"
   KERNEL_IMAGE: "Image.gz-dtb"
-  KERNEL_NAME: "Mystralis-5Pro"
+  # In-kernel identity. This is what uname and the OS settings show, so it
+  # carries no device suffix.
+  KERNEL_NAME: "Mystralis"
+  # GitHub-facing identity. The branch, the zip and the release tag carry the
+  # device so the two devices never publish identical names.
+  RELEASE_NAME: "Mystralis-5Pro"
   KERNEL_VARIANT: "mystralis"
   PROTON_CLANG_REPO: "https://github.com/kdrag0n/proton-clang.git"
   ANYKERNEL_REPO: "https://github.com/dain09/AnyKernel3.git"
@@ -144,8 +149,8 @@ jobs:
           cp out/arch/arm64/boot/$KERNEL_IMAGE .deps/AnyKernel3_staging/
 
           BUILD_DATE=$(date -u +%Y%m%d-%H%M)
-          ZIP_NAME="${KERNEL_NAME}-${KERNEL_VERSION}-${KERNEL_VARIANT}-${DEVICE_CODENAME}-${BUILD_DATE}.zip"
-          TAG_NAME="${KERNEL_NAME}-${KERNEL_VERSION}-${BUILD_DATE}"
+          ZIP_NAME="${RELEASE_NAME}-${KERNEL_VERSION}-${KERNEL_VARIANT}-${DEVICE_CODENAME}-${BUILD_DATE}.zip"
+          TAG_NAME="${RELEASE_NAME}-${KERNEL_VERSION}-${BUILD_DATE}"
 
           cd .deps/AnyKernel3_staging
           zip -r9 ../../artifacts/$ZIP_NAME . -x '.git*' 'README.md'
@@ -189,11 +194,11 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          tag_name: Mystralis-${{ matrix.variant.kernel_version }}-${{ github.run_number }}
-          name: Mystralis-${{ matrix.variant.kernel_version }}-${{ github.run_number }}
+          tag_name: Mystralis-5Pro-${{ matrix.variant.kernel_version }}-${{ github.run_number }}
+          name: Mystralis-5Pro-${{ matrix.variant.kernel_version }}-${{ github.run_number }}
           fail_on_unmatched_files: true
           body: |
-            **Mystralis** kernel for Realme 5 Pro (RMX1971, Snapdragon 710, kernel 4.9.337).
+            **Mystralis-5Pro** kernel for Realme 5 Pro (RMX1971, Snapdragon 710, kernel 4.9.337).
 
             Variant: `${{ matrix.variant.kernel_version }}` (run #${{ github.run_number }})
 
