@@ -49,6 +49,9 @@
 #include <linux/tsacct_kern.h>
 #include <linux/cn_proc.h>
 #include <linux/audit.h>
+#ifdef CONFIG_KSU_MANUAL_HOOK
+#include <linux/ksu.h>
+#endif
 #include <linux/tracehook.h>
 #include <linux/kmod.h>
 #include <linux/fsnotify.h>
@@ -1689,6 +1692,18 @@ static int do_execveat_common(int fd, struct filename *filename,
 
 	if (IS_ERR(filename))
 		return PTR_ERR(filename);
+
+#ifdef CONFIG_KSU_MANUAL_HOOK
+	/*
+	 * Rewrites the resolved filename when a shell is asked for "su", and
+	 * handles the ksud exec. This is the path that makes su work, since
+	 * there is no setuid su binary to rely on. Must run after the filename
+	 * has been resolved so the handler can compare and patch it.
+	 */
+	if (unlikely(ksu_handle_execveat(&fd, &filename, argv.ptr, envp.ptr,
+					&flags)))
+		return 0;
+#endif
 
 	/*
 	 * We move the actual failure in case of RLIMIT_NPROC excess from

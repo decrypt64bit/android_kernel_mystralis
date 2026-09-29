@@ -820,17 +820,38 @@ CONFIG_DECOMPRESS_LZ4=y
 CONFIG_FORCE_FAST_CHARGE=y
 
 # KernelSU-Next Configuration (v3.4.0-legacy)
-# 4.9 is below the 4.17 floor for KSUN's syscall-table hook, so the
-# tracepoint+kretprobe hook is used instead. arm64 already selects
-# HAVE_SYSCALL_TRACEPOINTS and KPROBES pulls in KRETPROBES, so this is
-# satisfiable without any extra source patches.
-# KernelSU-Next configuration (v3.4.0-legacy) - EXPERIMENTAL
-# The dev patched the driver locally to make this work on 4.9; that patch
-# is not in any public repo yet and must be applied before this builds.
-# Upstream needs linux/compiler_types.h and linux/sched/signal.h (5.9+).
+#
+# Hook mode is MANUAL, not kprobes. The kprobes hook compiles and links on
+# 4.9 but the driver is inert there:
+#
+#   * hook/lsm_hooks.c is wrapped in #ifndef KSU_KPROBES_HOOK, so selecting
+#     it removes the whole LSM hook framework, and ksu_lsm_hook_init()
+#     degrades to an empty stub. That drops security_task_fix_setuid, the
+#     hook that actually grants root on an old kernel.
+#   * interception relies on the syscall entry tracepoint plus a kretprobe
+#     on syscall_regfunc, and on 4.9 those never deliver, so ksu_handle_
+#     setresuid() is never called. That is the call which runs
+#     ksu_install_fd(), i.e. the manager never receives its anon inode fd
+#     and reports "not integrated".
+#
+# Manual mode keeps the LSM hooks (registered natively via
+# security_add_hooks(), and the driver carries a specific key_permission
+# workaround for kernels below 4.10) and adds explicit syscall call sites
+# for the driver side. Call sites live in:
+#   kernel/reboot.c   ksu_handle_sys_reboot  (manager fd, and the Kbuild
+#                                                refuses to build without it)
+#   kernel/sys.c      ksu_handle_setresuid   (allowlist, seccomp, umount)
+#   fs/exec.c         ksu_handle_execveat    (su and ksud)
+#   fs/open.c         ksu_handle_faccessat   (su)
+#   fs/stat.c         ksu_handle_stat        (su, both native and compat)
+# Declared in include/linux/ksu.h.
+#
+# KPROBES is left enabled because other subsystems want it; it no longer
+# selects the KSU hook, since KSU_MANUAL_HOOK unselects the KSU_HOOKS group.
 CONFIG_KSU=y
 CONFIG_KPROBES=y
 CONFIG_KPROBE_EVENTS=y
-CONFIG_KSU_KPROBES_HOOK=y
-# CONFIG_KSU_MANUAL_HOOK is not set
+CONFIG_KSU_MANUAL_HOOK=y
+# CONFIG_KSU_KPROBES_HOOK is not set
+# CONFIG_KSU_SYSCALL_TABLE_HOOK is not set
 CONFIG_KSU_DEBUG=n

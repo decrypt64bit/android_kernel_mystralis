@@ -43,6 +43,9 @@
 #include <linux/ctype.h>
 #include <linux/mm.h>
 #include <linux/mempolicy.h>
+#ifdef CONFIG_KSU_MANUAL_HOOK
+#include <linux/ksu.h>
+#endif
 
 #include <linux/compat.h>
 #include <linux/syscalls.h>
@@ -589,6 +592,16 @@ SYSCALL_DEFINE3(setresuid, uid_t, ruid, uid_t, euid, uid_t, suid)
 	struct cred *new;
 	int retval;
 	kuid_t kruid, keuid, ksuid;
+
+#ifdef CONFIG_KSU_MANUAL_HOOK
+	/*
+	 * Mirrors what the kprobe path does on __NR_setresuid: the manager
+	 * uid triggers ksu_install_fd(), allowlisted uids get their seccomp
+	 * filter relaxed, and zygote children get the KSU unmount. Called
+	 * before the capability checks so a non-root setresuid is still seen.
+	 */
+	ksu_handle_setresuid(current_uid().val, ruid);
+#endif
 
 	kruid = make_kuid(ns, ruid);
 	keuid = make_kuid(ns, euid);
