@@ -43,6 +43,7 @@
 
 #include <linux/module.h>
 #include <linux/moduleparam.h>
+#include <linux/workqueue.h>
 #include <linux/errno.h>
 #include <linux/kernel.h>
 #include <linux/major.h>
@@ -230,6 +231,7 @@ struct tun_struct {
 	void *security;
 	u32 flow_count;
 	struct tun_pcpu_stats __percpu *pcpu_stats;
+	struct work_struct unregister_work;
 };
 
 #ifdef CONFIG_TUN_VNET_CROSS_LE
@@ -544,6 +546,72 @@ static void tun_cleanup_tx_array(struct tun_file *tfile)
 	}
 }
 
+/*
+ * Deferred netdev teardown.
+ *
+ * unregister_netdevice() ends up in netdev_wait_allrefs(), which parks in
+ * msleep(250) until the device's reference count reaches zero. That happens
+ * inside the shared netdev todo queue, so while one device is waiting the
+ * rest of the queue cannot advance. If two devices each hold a reference the
+ * other teardown is supposed to release, both park forever.
+ *
+ * Observed on this device: closing a tun interface while a hotspot interface
+ * was being torn down left both stuck in "unregister_netdevice: waiting for
+ * <dev> to become free", wedging the whole network stack. The VPN app and
+ * the WiFi service both ended up in D state, so nothing could recover
+ * without a reboot.
+ *
+ * So never block a close() (or an rtnl_unlock) on this. Tear the device down
+ * from a kthread instead, and only enter unregister_netdevice() once the
+ * references have actually cleared. If they never clear, give up and leave
+ * the interface registered rather than wedging networking - a leaked
+ * interface is recoverable, a dead network stack is not.
+ */
+static struct workqueue_struct *tun_unregister_wq;
+static unsigned int tun_unregister_retries __read_mostly = 15;
+module_param(tun_unregister_retries, uint, 0644);
+MODULE_PARM_DESC(tun_unregister_retries,
+		 "Seconds to keep trying the deferred netdev teardown after a "
+		 "detach. Once exhausted the interface is left registered. 0 = give "
+		 "up immediately");
+
+static void tun_unregister_work(struct work_struct *work)
+{
+	struct tun_struct *tun = container_of(work, struct tun_struct,
+					      unregister_work);
+	struct net_device *dev = tun->dev;
+	unsigned int max = READ_ONCE(tun_unregister_retries);
+	unsigned int i;
+
+	/*
+	 * Sleep here rather than requeueing: we are a kthread holding no
+	 * locks, so waiting costs nothing that anyone is blocked on. Requeue
+	 * a work item from inside its own handler to avoid the racy dance
+	 * with the pending bit.
+	 */
+	for (i = 0; i < max; i++) {
+		if (!netdev_refcnt_read(dev)) {
+			unregister_netdevice(dev);
+			return;
+		}
+		msleep(1000);
+	}
+
+	if (!netdev_refcnt_read(dev)) {
+		unregister_netdevice(dev);
+		return;
+	}
+
+	pr_warn("dev %s still referenced (count %d) after %u seconds, leaving it registered\n",
+		dev->name, netdev_refcnt_read(dev), max);
+}
+
+static void tun_queue_unregister(struct tun_struct *tun)
+{
+	INIT_WORK(&tun->unregister_work, tun_unregister_work);
+	queue_work(tun_unregister_wq, &tun->unregister_work);
+}
+
 static void __tun_detach(struct tun_file *tfile, bool clean)
 {
 	struct tun_file *ntfile;
@@ -583,7 +651,7 @@ static void __tun_detach(struct tun_file *tfile, bool clean)
 
 			if (!(tun->flags & IFF_PERSIST) &&
 			    tun->dev->reg_state == NETREG_REGISTERED)
-				unregister_netdevice(tun->dev);
+				tun_queue_unregister(tun);
 		}
 		tun_cleanup_tx_array(tfile);
 		sock_put(&tfile->sk);
@@ -2696,6 +2764,12 @@ static int __init tun_init(void)
 	pr_info("%s, %s\n", DRV_DESCRIPTION, DRV_VERSION);
 	pr_info("%s\n", DRV_COPYRIGHT);
 
+	tun_unregister_wq = alloc_workqueue("tun_unregister", WQ_MEM_RECLAIM, 0);
+	if (!tun_unregister_wq) {
+		pr_err("Can't create unregister workqueue\n");
+		return -ENOMEM;
+	}
+
 	ret = rtnl_link_register(&tun_link_ops);
 	if (ret) {
 		pr_err("Can't register link_ops\n");
@@ -2713,6 +2787,7 @@ static int __init tun_init(void)
 err_misc:
 	rtnl_link_unregister(&tun_link_ops);
 err_linkops:
+	destroy_workqueue(tun_unregister_wq);
 	return ret;
 }
 
@@ -2721,6 +2796,7 @@ static void tun_cleanup(void)
 	misc_deregister(&tun_miscdev);
 	rtnl_link_unregister(&tun_link_ops);
 	unregister_netdevice_notifier(&tun_notifier_block);
+	destroy_workqueue(tun_unregister_wq);
 }
 
 /* Get an underlying socket object from tun file.  Returns error unless file is
