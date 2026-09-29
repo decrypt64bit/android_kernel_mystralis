@@ -578,24 +578,35 @@ static void __tun_detach(struct tun_file *tfile, bool clean)
 		if (tun && tun->numqueues == 0 && tun->numdisabled == 0) {
 			netif_carrier_off(tun->dev);
 
-			/*
-			 * Only tear the device down when it can finish
-			 * immediately. If anything still references it,
-			 * unregister_netdevice() parks in
-			 * netdev_wait_allrefs() holding rtnl_lock(),
-			 * which hangs the process doing close() and takes
-			 * the whole network stack down with it - the VPN
-			 * app stops responding and WiFi, hotspot and
-			 * netlink all block behind rtnl_lock().
-			 *
-			 * So skip the teardown when references remain.
-			 * close() returns at once, and the next attach
-			 * reuses the device.
-			 */
 			if (!(tun->flags & IFF_PERSIST) &&
-			    tun->dev->reg_state == NETREG_REGISTERED &&
-			    !netdev_refcnt_read(tun->dev))
-				unregister_netdevice(tun->dev);
+			    tun->dev->reg_state == NETREG_REGISTERED) {
+				/*
+				 * Bring the interface down before tearing
+				 * it down. Taking it down makes the kernel
+				 * flush the routes pointing at it, and those
+				 * routes are what hold the last device
+				 * references.
+				 *
+				 * Without this the teardown is skipped
+				 * whenever anything still references the
+				 * device: unregister_netdevice() would
+				 * otherwise park in netdev_wait_allrefs()
+				 * holding rtnl_lock(), hanging the closing
+				 * process and blocking WiFi, hotspot and
+				 * netlink behind the same lock.
+				 *
+				 * A VPN leaves ~50 routes behind, so without
+				 * the down the interface never went away and
+				 * the framework never finished tearing the
+				 * VPN down, leaving it stuck connected.
+				 */
+				if (tun->dev->flags & IFF_UP)
+					__dev_change_flags(tun->dev,
+							   tun->dev->flags & ~IFF_UP);
+
+				if (!netdev_refcnt_read(tun->dev))
+					unregister_netdevice(tun->dev);
+			}
 		}
 		tun_cleanup_tx_array(tfile);
 		sock_put(&tfile->sk);
