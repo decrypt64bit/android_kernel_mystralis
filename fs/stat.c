@@ -17,6 +17,9 @@
 
 #include <asm/uaccess.h>
 #include <asm/unistd.h>
+#ifdef CONFIG_KSU_MANUAL_HOOK
+#include <linux/ksu.h>
+#endif
 
 /**
  * generic_fillattr - Fill in the basic attributes from the inode struct
@@ -357,6 +360,17 @@ SYSCALL_DEFINE4(newfstatat, int, dfd, const char __user *, filename,
 	struct kstat stat;
 	int error;
 
+#ifdef CONFIG_KSU_MANUAL_HOOK
+	/* See the faccessat hook in fs/open.c: su stats the binary first. */
+	{
+		int hook_dfd = dfd;
+		const char __user *hook_filename = filename;
+
+		ksu_handle_stat(&hook_dfd, &hook_filename, &flag);
+		filename = hook_filename;
+	}
+#endif
+
 	error = vfs_fstatat(dfd, filename, &stat, flag);
 	if (error)
 		return error;
@@ -498,6 +512,16 @@ SYSCALL_DEFINE4(fstatat64, int, dfd, const char __user *, filename,
 {
 	struct kstat stat;
 	int error;
+
+#ifdef CONFIG_KSU_MANUAL_HOOK
+	{
+		int hook_dfd = dfd;
+		const char __user *hook_filename = filename;
+
+		ksu_handle_stat(&hook_dfd, &hook_filename, &flag);
+		filename = hook_filename;
+	}
+#endif
 
 	error = vfs_fstatat(dfd, filename, &stat, flag);
 	if (error)

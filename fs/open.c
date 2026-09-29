@@ -33,6 +33,9 @@
 #include <linux/compat.h>
 
 #include "internal.h"
+#ifdef CONFIG_KSU_MANUAL_HOOK
+#include <linux/ksu.h>
+#endif
 
 int do_truncate2(struct vfsmount *mnt, struct dentry *dentry, loff_t length,
 		unsigned int time_attrs, struct file *filp)
@@ -369,6 +372,22 @@ SYSCALL_DEFINE3(faccessat, int, dfd, const char __user *, filename, int, mode)
 	struct vfsmount *mnt;
 	int res;
 	unsigned int lookup_flags = LOOKUP_FOLLOW;
+
+#ifdef CONFIG_KSU_MANUAL_HOOK
+	/*
+	 * su probes the target binary with faccessat() before exec'ing it, so
+	 * the "su" path has to be swapped here too or the exec below is
+	 * rejected. 4.9's faccessat has no flags argument, hence the NULL.
+	 * The handler only rewrites the path pointer, it never fails the call.
+	 */
+	{
+		int hook_dfd = dfd;
+		const char __user *hook_filename = filename;
+
+		ksu_handle_faccessat(&hook_dfd, &hook_filename, &mode, NULL);
+		filename = hook_filename;
+	}
+#endif
 
 	if (mode & ~S_IRWXO)	/* where's F_OK, X_OK, W_OK, R_OK? */
 		return -EINVAL;
