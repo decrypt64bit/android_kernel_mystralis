@@ -25,8 +25,6 @@ env:
   KERNELSU_SETUP_BRANCH: legacy
   KBUILD_BUILD_USER: "@decrypt64bit"
   KBUILD_BUILD_HOST: "ubuntu-24.04"
-  PRE_SLMK_BASE: "ba2a841dabfe7972a68dc81fa51f22fa9e9e229f"
-  LAST_SLMK_COMMIT: "53fa58342e3203584740df2de23dda896799f322"
 
 jobs:
   build:
@@ -50,12 +48,15 @@ jobs:
           # Shallow checkout is enough (no rebase); speeds up CI a lot.
           fetch-depth: 1
 
-      - name: Drop Simple LMK commits via rebase
+      - name: Switch non-SLMK variant to classic LMK
         if: ${{ matrix.variant.kernel_version == 'ascension' }}
         run: |
-          git config user.email "action@github.com"
-          git config user.name "GitHub Action"
-          git rebase --onto $PRE_SLMK_BASE $LAST_SLMK_COMMIT
+          # The rebase this replaced could not replay on the current tree and
+          # needs full history, which conflicts with the shallow checkout.
+          # Switch the defconfig instead: same result, no history rewriting.
+          ./scripts/config --file arch/arm64/configs/$KERNEL_DEFCONFIG \
+            --disable ANDROID_SIMPLE_LMK \
+            --enable ANDROID_LOW_MEMORY_KILLER
 
       - name: Restore ccache
         uses: hendrikmuhs/ccache-action@v1.2.23
