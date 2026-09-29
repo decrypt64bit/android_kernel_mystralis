@@ -18,7 +18,7 @@ env:
   KERNEL_DEFCONFIG: "sdm670-perf_defconfig"
   KERNEL_IMAGE: "Image.gz-dtb"
   KERNEL_NAME: "Mystralis-XT"
-  KERNEL_VARIANT: "mystralis-rxt"
+  KERNEL_VARIANT: "mystralis"
   PROTON_CLANG_REPO: "https://github.com/kdrag0n/proton-clang.git"
   ANYKERNEL_REPO: "https://github.com/dain09/AnyKernel3.git"
   KERNELSU_SETUP: "https://raw.githubusercontent.com/dain09/KernelSU/refs/heads/hookless/kernel/setup.sh"
@@ -38,8 +38,8 @@ jobs:
       fail-fast: false
       matrix:
         variant:
-          - kernel_version: "meridian-SLMK"
-          - kernel_version: "meridian"
+          - kernel_version: "ascension-SLMK"
+          - kernel_version: "ascension"
 
     steps:
       - name: Checkout kernel source
@@ -49,7 +49,7 @@ jobs:
           fetch-depth: 1
 
       - name: Switch non-SLMK variant to classic LMK
-        if: ${{ matrix.variant.kernel_version == 'meridian' }}
+        if: ${{ matrix.variant.kernel_version == 'ascension' }}
         run: |
           # The rebase this replaced could not replay on the current tree and
           # needs full history, which conflicts with the shallow checkout.
@@ -170,8 +170,8 @@ jobs:
       fail-fast: false
       matrix:
         variant:
-          - kernel_version: "meridian-SLMK"
-          - kernel_version: "meridian"
+          - kernel_version: "ascension-SLMK"
+          - kernel_version: "ascension"
     permissions:
       contents: write
     steps:
