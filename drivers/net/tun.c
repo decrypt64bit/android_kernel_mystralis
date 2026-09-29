@@ -2738,6 +2738,60 @@ static struct notifier_block tun_notifier_block __read_mostly = {
 	.notifier_call	= tun_device_event,
 };
 
+/*
+ * Orphan reaper.
+ *
+ * A tun interface is only in use while a userspace process has a queue
+ * attached to it. Once the last fd is detached, numqueues and numdisabled
+ * both drop to zero and the interface is dead weight: it keeps the
+ * interface index, routes and memory, and a VPN app that failed to tear
+ * down cleanly leaves one behind on every attempt.
+ *
+ * Sweep for such interfaces periodically and unregister them so they cannot
+ * accumulate. Only interfaces with no attached queue are touched, so a live
+ * VPN is never disturbed.
+ */
+static unsigned int tun_reaper_interval __read_mosty = 20;
+module_param(tun_reaper_interval, uint, 0644);
+MODULE_PARM_DESC(tun_reaper_interval,
+		 "Seconds between sweeps that unregister unused tun interfaces. "
+		 "0 = disabled");
+
+static void tun_reap_work(struct work_struct *work);
+
+static struct delayed_work tun_reaper = INIT_DELAYED_WORK(tun_reap_work);
+
+static void tun_reap_work(struct work_struct *work)
+{
+	struct net *net;
+	struct net_device *dev;
+	unsigned int interval = READ_ONCE(tun_reaper_interval);
+
+	for_each_netdev(net, dev) {
+		struct tun_struct *tun;
+
+		if (dev->netdev_ops != &tun_netdev_ops &&
+		    dev->netdev_ops != &tap_netdev_ops)
+			continue;
+
+		if (dev->reg_state != NETREG_REGISTERED)
+			continue;
+
+		tun = netdev_priv(dev);
+
+		/* A queue is still attached, so someone is using it. */
+		if (tun->numqueues || tun->numdisabled)
+			continue;
+
+		pr_info("reaping unused tun interface %s\n", dev->name);
+		unregister_netdevice(dev);
+	}
+
+	if (interval)
+		schedule_delayed_work(&tun_reaper,
+				      msecs_to_jiffies(interval * 1000));
+}
+
 static int __init tun_init(void)
 {
 	int ret = 0;
@@ -2764,6 +2818,9 @@ static int __init tun_init(void)
 	}
 
 	register_netdevice_notifier(&tun_notifier_block);
+	if (tun_reaper_interval)
+		schedule_delayed_work(&tun_reaper,
+				      msecs_to_jiffies(tun_reaper_interval * 1000));
 	return  0;
 err_misc:
 	rtnl_link_unregister(&tun_link_ops);
@@ -2774,6 +2831,7 @@ err_linkops:
 
 static void tun_cleanup(void)
 {
+	cancel_delayed_work_sync(&tun_reaper);
 	misc_deregister(&tun_miscdev);
 	rtnl_link_unregister(&tun_link_ops);
 	unregister_netdevice_notifier(&tun_notifier_block);

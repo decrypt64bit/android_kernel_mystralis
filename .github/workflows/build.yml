@@ -1,4 +1,4 @@
-name: Build Khaenriah Kernel
+name: Build Mystralis Kernel
 
 on:
   workflow_dispatch:
@@ -17,8 +17,8 @@ env:
   DEVICE_CODENAME: "RMX1971"
   KERNEL_DEFCONFIG: "sdm670-perf_defconfig"
   KERNEL_IMAGE: "Image.gz-dtb"
-  KERNEL_NAME: "Khaenriah"
-  KERNEL_VARIANT: "singularity-birth"
+  KERNEL_NAME: "Mystralis"
+  KERNEL_VARIANT: "mystralis"
   PROTON_CLANG_REPO: "https://github.com/kdrag0n/proton-clang.git"
   ANYKERNEL_REPO: "https://github.com/dain09/AnyKernel3.git"
   # Hookless KSU driver (backslashxx/KernelSU). Pinned to v3.3.0-52 - the
@@ -27,7 +27,7 @@ env:
   # KernelSU_v3.3.0-52_32653 was built from. Driver reports KSU_VERSION=32651.
   KERNELSU_SETUP: "https://raw.githubusercontent.com/dain09/KernelSU/refs/heads/hookless/kernel/setup.sh"
   KERNELSU_SETUP_BRANCH: v3.3.0-52
-  KBUILD_BUILD_USER: "@d_ai_n"
+  KBUILD_BUILD_USER: "@decrypt64bit"
   KBUILD_BUILD_HOST: "ubuntu-24.04"
 
 jobs:
@@ -39,8 +39,8 @@ jobs:
     strategy:
       matrix:
         variant:
-          - kernel_version: "SLMK-singularity-birth-EOL"
-          - kernel_version: "singularity-birth-EOL"
+          - kernel_version: "ascension-SLMK"
+          - kernel_version: "ascension"
 
     steps:
       - name: Checkout kernel source
@@ -50,7 +50,7 @@ jobs:
           fetch-depth: 1
 
       - name: Switch non-SLMK variant to classic LMK
-        if: ${{ matrix.variant.kernel_version == 'singularity-birth-EOL' }}
+        if: ${{ matrix.variant.kernel_version == 'ascension' }}
         run: |
           # Don't rebase SLMK commits away (conflict-prone); just disable
           # the driver and enable the self-starting classic lowmemorykiller
@@ -166,8 +166,8 @@ jobs:
     strategy:
       matrix:
         variant:
-          - kernel_version: "SLMK-singularity-birth-EOL"
-          - kernel_version: "singularity-birth-EOL"
+          - kernel_version: "ascension-SLMK"
+          - kernel_version: "ascension"
     permissions:
       contents: write
     steps:
