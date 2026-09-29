@@ -193,14 +193,14 @@ jobs:
           name: Mystralis-${{ matrix.variant.kernel_version }}-${{ github.run_number }}
           fail_on_unmatched_files: true
           body: |
-            **Mystralis** kernel for Realme 2 Pro (RMX1971, SDM670, kernel 4.9.337).
+            **Mystralis** kernel for Realme 5 Pro (RMX1971, Snapdragon 710, kernel 4.9.337).
 
             Variant: `${{ matrix.variant.kernel_version }}` (run #${{ github.run_number }})
 
             | | |
             |---|---|
-            | Device | Realme 2 Pro (RMX1971) |
-            | SoC | Qualcomm SDM670 |
+            | Device | Realme 5 Pro (RMX1971) |
+            | SoC | Qualcomm Snapdragon 710 (SDM710) |
             | Kernel | 4.9.337-Mystralis |
             | Defconfig | `sdm670-perf_defconfig` |
             | Toolchain | proton-clang (kdrag0n) |
