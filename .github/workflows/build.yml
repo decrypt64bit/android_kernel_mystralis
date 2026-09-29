@@ -1,4 +1,4 @@
-name: Build Khaenriah Kernel
+name: Build Rebel Kernel
 
 on:
   workflow_dispatch:
@@ -17,13 +17,13 @@ env:
   DEVICE_CODENAME: "RMX1921"
   KERNEL_DEFCONFIG: "sdm670-perf_defconfig"
   KERNEL_IMAGE: "Image.gz-dtb"
-  KERNEL_NAME: "Khaenriah"
-  KERNEL_VARIANT: "XXKSU"
+  KERNEL_NAME: "Rebel"
+  KERNEL_VARIANT: "rebel"
   PROTON_CLANG_REPO: "https://github.com/kdrag0n/proton-clang.git"
   ANYKERNEL_REPO: "https://github.com/dain09/AnyKernel3.git"
-  KERNELSU_SETUP: "https://raw.githubusercontent.com/dain09/KernelSU/refs/heads/hookless/kernel/setup.sh"
-  KERNELSU_SETUP_BRANCH: hookless
-  KBUILD_BUILD_USER: "@d_ai_n"
+  KERNELSU_SETUP: "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh"
+  KERNELSU_SETUP_BRANCH: legacy
+  KBUILD_BUILD_USER: "@decrypt64bit"
   KBUILD_BUILD_HOST: "ubuntu-24.04"
   PRE_SLMK_BASE: "e76d43ca50b2c5c27fe73cc90cb66f277a247835"
   LAST_SLMK_COMMIT: "a689b95814639e79cc2067458f48e01f3c4774b2"
@@ -37,17 +37,18 @@ jobs:
     strategy:
       matrix:
         variant:
-          - kernel_version: "SLMK-EOL"
-          - kernel_version: "EOL"
+          - kernel_version: "ascension-SLMK"
+          - kernel_version: "ascension"
 
     steps:
       - name: Checkout kernel source
         uses: actions/checkout@v6
         with:
-          fetch-depth: 0
+          # Shallow checkout is enough (no rebase); speeds up CI a lot.
+          fetch-depth: 1
 
       - name: Drop Simple LMK commits via rebase
-        if: ${{ matrix.variant.kernel_version == 'EOL' }}
+        if: ${{ matrix.variant.kernel_version == 'ascension' }}
         run: |
           git config user.email "action@github.com"
           git config user.name "GitHub Action"
@@ -74,9 +75,16 @@ jobs:
         run: |
           git clone --depth 1 -b rxt $ANYKERNEL_REPO .deps/AnyKernel3
 
-      - name: Integrate KernelSU
+      - name: Integrate KernelSU-Next (legacy)
         run: |
           curl -LSs "$KERNELSU_SETUP" | bash -s $KERNELSU_SETUP_BRANCH
+          # setup.sh silently falls back to the default branch when its
+          # checkout fails ("Checkout default branch"), so enforce the pin
+          # explicitly. The step fails loudly if this doesn't work.
+          cd KernelSU-Next
+          git fetch origin "$KERNELSU_SETUP_BRANCH" || git fetch origin
+          git checkout "$KERNELSU_SETUP_BRANCH"
+          git rev-parse HEAD
 
       - name: Configure and Build Kernel
         env:
@@ -153,8 +161,8 @@ jobs:
     strategy:
       matrix:
         variant:
-          - kernel_version: "SLMK-EOL"
-          - kernel_version: "EOL"
+          - kernel_version: "ascension-SLMK"
+          - kernel_version: "ascension"
     permissions:
       contents: write
     steps:
