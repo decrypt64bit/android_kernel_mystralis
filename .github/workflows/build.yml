@@ -17,8 +17,11 @@ env:
   DEVICE_CODENAME: "RMX1971"
   KERNEL_DEFCONFIG: "sdm670-perf_defconfig"
   KERNEL_IMAGE: "Image.gz-dtb"
+  # In-kernel identity: uname and OS settings, no device suffix.
   KERNEL_NAME: "Rebel"
-  KERNEL_VARIANT: "r5p-ksun-test"
+  # GitHub-facing identity: branch, zip and release tag carry the device.
+  RELEASE_NAME: "Rebel-5Pro"
+  KERNEL_VARIANT: "rebel"
   PROTON_CLANG_REPO: "https://github.com/kdrag0n/proton-clang.git"
   ANYKERNEL_REPO: "https://github.com/dain09/AnyKernel3.git"
   KERNELSU_SETUP: "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh"
@@ -172,8 +175,8 @@ jobs:
           cp out/arch/arm64/boot/$KERNEL_IMAGE .deps/AnyKernel3_staging/
 
           BUILD_DATE=$(date -u +%Y%m%d-%H%M)
-          ZIP_NAME="${KERNEL_NAME}-${KERNEL_VERSION}-${KERNEL_VARIANT}-${DEVICE_CODENAME}-${BUILD_DATE}.zip"
-          TAG_NAME="${KERNEL_NAME}-${KERNEL_VERSION}-${BUILD_DATE}"
+          ZIP_NAME="${RELEASE_NAME}-${KERNEL_VERSION}-${KERNEL_VARIANT}-${DEVICE_CODENAME}-${BUILD_DATE}.zip"
+          TAG_NAME="${RELEASE_NAME}-${KERNEL_VERSION}-${BUILD_DATE}"
 
           cd .deps/AnyKernel3_staging
           zip -r9 ../../artifacts/$ZIP_NAME . -x '.git*' 'README.md'
