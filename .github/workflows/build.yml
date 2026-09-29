@@ -90,6 +90,35 @@ jobs:
           git checkout "$KERNELSU_SETUP_BRANCH"
           git rev-parse HEAD
 
+          # Backport headers for 4.9.
+          #
+          # KSUN's tree targets Linux 5.9+ and includes headers that were
+          # split out of older ones after 4.9:
+          #   compiler_types.h                  -> split out of compiler.h
+          #   sched/signal.h, sched/task_stack.h,
+          #   sched/types.h, sched/user.h       -> split out of sched.h
+          #   pgtable.h                         -> arch specific, use asm/
+          #   hex.h                             -> include is unused, drop it
+          #
+          # linux/version.h needs no change: the kernel Makefile generates it
+          # from VERSION/PATCHLEVEL, so LINUX_VERSION_CODE is available.
+          find kernel -name '*.[ch]' -exec sed -i \
+            -e 's|<linux/compiler_types\.h>|<linux/compiler.h>|g' \
+            -e 's|<linux/sched/signal\.h>|<linux/sched.h>|g' \
+            -e 's|<linux/sched/task_stack\.h>|<linux/sched.h>|g' \
+            -e 's|<linux/sched/types\.h>|<linux/sched.h>|g' \
+            -e 's|<linux/sched/user\.h>|<linux/sched.h>|g' \
+            -e 's|<linux/pgtable\.h>|<asm/pgtable.h>|g' \
+            -e '/#include <linux\/hex\.h>/d' {} +
+
+          # Fail loudly if any 5.9+ only include survived the rewrite.
+          if grep -rEn 'linux/(compiler_types|hex|pgtable)\.h|linux/sched/' \
+               kernel --include='*.c' --include='*.h'; then
+            echo "::error::5.9+ only includes remain in the KSUN tree"
+            exit 1
+          fi
+          echo "KSUN 4.9 header backport: no 5.9+ only includes remain"
+
       - name: Configure and Build Kernel
         env:
           KERNEL_VERSION: ${{ matrix.variant.kernel_version }}
