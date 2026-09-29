@@ -18,7 +18,7 @@ env:
   KERNEL_DEFCONFIG: "sdm670-perf_defconfig"
   KERNEL_IMAGE: "Image.gz-dtb"
   KERNEL_NAME: "Mystralis-XT"
-  KERNEL_VARIANT: "rebel"
+  KERNEL_VARIANT: "mystralis-rxt"
   PROTON_CLANG_REPO: "https://github.com/kdrag0n/proton-clang.git"
   ANYKERNEL_REPO: "https://github.com/dain09/AnyKernel3.git"
   KERNELSU_SETUP: "https://raw.githubusercontent.com/dain09/KernelSU/refs/heads/hookless/kernel/setup.sh"
@@ -38,8 +38,8 @@ jobs:
       fail-fast: false
       matrix:
         variant:
-          - kernel_version: "ascension-SLMK"
-          - kernel_version: "ascension"
+          - kernel_version: "meridian-SLMK"
+          - kernel_version: "meridian"
 
     steps:
       - name: Checkout kernel source
@@ -49,7 +49,7 @@ jobs:
           fetch-depth: 1
 
       - name: Switch non-SLMK variant to classic LMK
-        if: ${{ matrix.variant.kernel_version == 'ascension' }}
+        if: ${{ matrix.variant.kernel_version == 'meridian' }}
         run: |
           # The rebase this replaced could not replay on the current tree and
           # needs full history, which conflicts with the shallow checkout.
@@ -170,8 +170,8 @@ jobs:
       fail-fast: false
       matrix:
         variant:
-          - kernel_version: "ascension-SLMK"
-          - kernel_version: "ascension"
+          - kernel_version: "meridian-SLMK"
+          - kernel_version: "meridian"
     permissions:
       contents: write
     steps:
@@ -185,8 +185,8 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          tag_name: Rebel-${{ matrix.variant.kernel_version }}-${{ github.run_number }}
-          name: Rebel-${{ matrix.variant.kernel_version }}-${{ github.run_number }}
+          tag_name: Mystralis-XT-${{ matrix.variant.kernel_version }}-${{ github.run_number }}
+          name: Mystralis-XT-${{ matrix.variant.kernel_version }}-${{ github.run_number }}
           fail_on_unmatched_files: true
           body: |
             **Rebel** kernel for Realme XT (RMX1921, Snapdragon 710, kernel 4.9.337).
