@@ -18,7 +18,7 @@ env:
   KERNEL_DEFCONFIG: "sdm670-perf_defconfig"
   KERNEL_IMAGE: "Image.gz-dtb"
   KERNEL_NAME: "Rebel"
-  KERNEL_VARIANT: "rebel"
+  KERNEL_VARIANT: "rxt-ksun-test"
   PROTON_CLANG_REPO: "https://github.com/kdrag0n/proton-clang.git"
   ANYKERNEL_REPO: "https://github.com/dain09/AnyKernel3.git"
   KERNELSU_SETUP: "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh"
@@ -38,8 +38,8 @@ jobs:
       fail-fast: false
       matrix:
         variant:
-          - kernel_version: "ascension-SLMK"
-          - kernel_version: "ascension"
+          - kernel_version: "flint-SLMK"
+          - kernel_version: "flint"
 
     steps:
       - name: Checkout kernel source
@@ -49,7 +49,7 @@ jobs:
           fetch-depth: 1
 
       - name: Switch non-SLMK variant to classic LMK
-        if: ${{ matrix.variant.kernel_version == 'ascension' }}
+        if: ${{ matrix.variant.kernel_version == 'flint' }}
         run: |
           # The rebase this replaced could not replay on the current tree and
           # needs full history, which conflicts with the shallow checkout.
@@ -170,8 +170,8 @@ jobs:
       fail-fast: false
       matrix:
         variant:
-          - kernel_version: "ascension-SLMK"
-          - kernel_version: "ascension"
+          - kernel_version: "flint-SLMK"
+          - kernel_version: "flint"
     permissions:
       contents: write
     steps:
