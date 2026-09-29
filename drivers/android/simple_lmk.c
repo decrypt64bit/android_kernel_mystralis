@@ -6,6 +6,8 @@
 #define pr_fmt(fmt) "simple_lmk: " fmt
 
 #include <linux/freezer.h>
+#include <linux/init.h>
+#include <linux/jiffies.h>
 #include <linux/kthread.h>
 #include <linux/mm.h>
 #include <linux/moduleparam.h>
@@ -37,6 +39,48 @@ static __cacheline_aligned_in_smp DEFINE_RWLOCK(mm_free_lock);
 static int nr_victims;
 static atomic_t needs_reclaim = ATOMIC_INIT(0);
 static atomic_t nr_killed = ATOMIC_INIT(0);
+
+/*
+ * Boot grace period.
+ *
+ * Boot is legitimately memory hungry: zygote, system_server and the Play
+ * services all load at once. Killing cached apps in that window makes each
+ * one restart and redo its work, which produces a restart thrash that keeps
+ * the device unusable for a couple of minutes after unlock. Transient
+ * reclaim pressure during boot is far cheaper than mass killing, so hold off
+ * killing until this many milliseconds have elapsed since LMK start.
+ */
+static unsigned int boot_grace_ms __read_mostly = 90000;
+module_param(boot_grace_ms, uint, 0644);
+MODULE_PARM_DESC(boot_grace_ms,
+		 "Milliseconds after LMK start during which no process is killed. "
+		 "Avoids boot-time kill/restart thrash. 0 = disabled");
+
+/*
+ * Pressure debounce.
+ *
+ * A single vmpressure notification at 100 is often just a reclaim spike, not
+ * sustained exhaustion. Require either several such notifications or a
+ * sustained window of them before killing, so transient pressure is left to
+ * plain reclaim. Any continuing pressure still triggers: the count is reset
+ * only by a notification reporting pressure below 100.
+ */
+static unsigned int pressure_min_streak __read_mostly = 3;
+module_param(pressure_min_streak, uint, 0644);
+MODULE_PARM_DESC(pressure_min_streak,
+		 "Number of pressure==100 notifications required before killing. "
+		 "1 = react to the first one. 0 = disabled (same as 1)");
+
+static unsigned int pressure_window_ms __read_mostly = 2000;
+module_param(pressure_window_ms, uint, 0644);
+MODULE_PARM_DESC(pressure_window_ms,
+		 "If this much time passes between pressure==100 notifications, "
+		 "treat the pressure as sustained and kill without waiting for the "
+		 "full streak. 0 = only the streak triggers");
+
+static unsigned long boot_grace_deadline;
+static unsigned long pressure_first_jiffies;
+static atomic_t pressure_streak = ATOMIC_INIT(0);
 
 static int victim_cmp(const void *lhs_ptr, const void *rhs_ptr)
 {
@@ -288,7 +332,12 @@ static int simple_lmk_reclaim_thread(void *data)
 
 	while (1) {
 		wait_event_freezable(oom_waitq, atomic_read(&needs_reclaim));
-		scan_and_kill();
+
+		if (time_before(jiffies, READ_ONCE(boot_grace_deadline)))
+			pr_info_ratelimited("simple_lmk: boot grace period, not killing\n");
+		else
+			scan_and_kill();
+
 		atomic_set(&needs_reclaim, 0);
 	}
 
@@ -317,7 +366,33 @@ void simple_lmk_mm_freed(struct mm_struct *mm)
 static int simple_lmk_vmpressure_cb(struct notifier_block *nb,
 				    unsigned long pressure, void *data)
 {
-	if (pressure == 100) {
+	unsigned int min_streak = READ_ONCE(pressure_min_streak);
+	unsigned int window_ms = READ_ONCE(pressure_window_ms);
+	int streak, trigger = 0;
+
+	if (pressure != 100) {
+		atomic_set(&pressure_streak, 0);
+		return NOTIFY_OK;
+	}
+
+	if (!min_streak)
+		min_streak = 1;
+
+	streak = atomic_inc_return(&pressure_streak);
+	if (streak == 1)
+		pressure_first_jiffies = jiffies;
+
+	/* Enough consecutive pressure notifications, or pressure that has
+	 * been sitting at 100 for longer than the debounce window.
+	 */
+	if (streak >= min_streak ||
+	    (window_ms &&
+	     time_after(jiffies, pressure_first_jiffies +
+			msecs_to_jiffies(window_ms))))
+		trigger = 1;
+
+	if (trigger) {
+		atomic_set(&pressure_streak, 0);
 		atomic_set(&needs_reclaim, 1);
 		smp_mb__after_atomic();
 		if (waitqueue_active(&oom_waitq))
@@ -332,21 +407,47 @@ static struct notifier_block vmpressure_notif = {
 	.priority = INT_MAX
 };
 
-/* Initialize Simple LMK when lmkd in Android writes to the minfree parameter */
-static int simple_lmk_init_set(const char *val, const struct kernel_param *kp)
+/* Start the reclaim thread and register for VM pressure events (idempotent) */
+static void simple_lmk_start(void)
 {
 	static atomic_t init_done = ATOMIC_INIT(0);
 	struct task_struct *thread;
 
 	if (!atomic_cmpxchg(&init_done, 0, 1)) {
+		/* Arm the boot grace period before the thread can observe it.
+		 * A boot_grace_ms of 0 leaves the deadline in the past, which
+		 * disables the grace period entirely.
+		 */
+		WRITE_ONCE(boot_grace_deadline,
+			   jiffies + msecs_to_jiffies(READ_ONCE(boot_grace_ms)));
+
 		thread = kthread_run(simple_lmk_reclaim_thread, NULL,
 				     "simple_lmkd");
 		BUG_ON(IS_ERR(thread));
 		BUG_ON(vmpressure_notifier_register(&vmpressure_notif));
 	}
+}
+
+/* Initialize Simple LMK when lmkd in Android writes to the minfree parameter */
+static int simple_lmk_init_set(const char *val, const struct kernel_param *kp)
+{
+	simple_lmk_start();
 
 	return 0;
 }
+
+/*
+ * Start Simple LMK unconditionally at boot so killing works even when
+ * userspace lmkd never writes lowmemorykiller.minfree (e.g. Android 10+
+ * lmkd driving PSI/memcg paths that don't exist on this kernel).
+ */
+static int __init simple_lmk_late_init(void)
+{
+	simple_lmk_start();
+
+	return 0;
+}
+late_initcall(simple_lmk_late_init);
 
 static const struct kernel_param_ops simple_lmk_init_ops = {
 	.set = simple_lmk_init_set

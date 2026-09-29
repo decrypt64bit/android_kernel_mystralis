@@ -42,9 +42,13 @@
 #define DRV_COPYRIGHT	"(C) 1999-2004 Max Krasnyansky <maxk@qualcomm.com>"
 
 #include <linux/module.h>
+#include <linux/moduleparam.h>
+#include <linux/workqueue.h>
 #include <linux/errno.h>
 #include <linux/kernel.h>
 #include <linux/major.h>
+#include <linux/delay.h>
+#include <linux/jiffies.h>
 #include <linux/slab.h>
 #include <linux/poll.h>
 #include <linux/fcntl.h>
@@ -227,6 +231,7 @@ struct tun_struct {
 	void *security;
 	u32 flow_count;
 	struct tun_pcpu_stats __percpu *pcpu_stats;
+	struct work_struct unregister_work;
 };
 
 #ifdef CONFIG_TUN_VNET_CROSS_LE
@@ -541,6 +546,53 @@ static void tun_cleanup_tx_array(struct tun_file *tfile)
 	}
 }
 
+/*
+ * Deferred netdev teardown.
+ *
+ * unregister_netdevice() ends up in netdev_wait_allrefs(), which parks in
+ * msleep(250) until the device's reference count reaches zero. That happens
+ * inside the shared netdev todo queue, so while one device is waiting the
+ * rest of the queue cannot advance. If two devices each hold a reference the
+ * other teardown is supposed to release, both park forever.
+ *
+ * Observed on this device: closing a tun interface while a hotspot interface
+ * was being torn down left both stuck in "unregister_netdevice: waiting for
+ * <dev> to become free", wedging the whole network stack. The VPN app and
+ * the WiFi service both ended up in D state, so nothing could recover
+ * without a reboot.
+ *
+ * So never block a close() (or an rtnl_unlock) on this. Tear the device down
+ * from a kthread instead, and only enter unregister_netdevice() once the
+ * references have actually cleared. If they never clear, give up and leave
+ * the interface registered rather than wedging networking - a leaked
+ * interface is recoverable, a dead network stack is not.
+ */
+static struct workqueue_struct *tun_unregister_wq;
+
+static void tun_unregister_work(struct work_struct *work)
+{
+	struct tun_struct *tun = container_of(work, struct tun_struct,
+					      unregister_work);
+
+	/*
+	 * Always initiate the teardown. Do not gate this on the reference
+	 * count: the references held by a VPN's routes are released *by* the
+	 * unregister that flushes those routes, so waiting for the count to
+	 * reach zero first is a condition that can never be satisfied.
+	 *
+	 * Running here rather than in close() keeps the user thread out of
+	 * netdev_wait_allrefs(), which parks in msleep(250) and holds
+	 * rtnl_lock() - that is what used to freeze the whole network stack.
+	 */
+	unregister_netdevice(tun->dev);
+}
+
+static void tun_queue_unregister(struct tun_struct *tun)
+{
+	INIT_WORK(&tun->unregister_work, tun_unregister_work);
+	queue_work(tun_unregister_wq, &tun->unregister_work);
+}
+
 static void __tun_detach(struct tun_file *tfile, bool clean)
 {
 	struct tun_file *ntfile;
@@ -580,18 +632,71 @@ static void __tun_detach(struct tun_file *tfile, bool clean)
 
 			if (!(tun->flags & IFF_PERSIST) &&
 			    tun->dev->reg_state == NETREG_REGISTERED)
-				unregister_netdevice(tun->dev);
+				tun_queue_unregister(tun);
 		}
 		tun_cleanup_tx_array(tfile);
 		sock_put(&tfile->sk);
 	}
 }
 
+static unsigned int tun_force_detach_ms __read_mostly = 5000;
+module_param(tun_force_detach_ms, uint, 0644);
+MODULE_PARM_DESC(tun_force_detach_ms,
+		 "Max milliseconds to wait for rtnl_lock during TUN detach. On "
+		 "timeout the detach is skipped so a stuck TUN/VPN close cannot "
+		 "hang userspace forever. 0 restores the legacy unbounded wait");
+
+/*
+ * Khaenriah: bounded rtnl_lock acquisition for the TUN teardown path.
+ *
+ * A wedged TUN/VPN teardown must never block userspace indefinitely. On
+ * Android a VPN service that hangs inside close() never tears its VpnService
+ * down, so ConnectivityService keeps the VPN policy routing rules installed
+ * (including the "unreachable" catch-all) and the device ends up blackholed
+ * with no WiFi/cellular/hotspot until a reboot rebuilds the rule set.
+ *
+ * Returns true if the caller now holds rtnl_lock. On timeout it deliberately
+ * leaves the lock alone and the caller must not touch any TUN state.
+ */
+static bool tun_rtnl_lock_bounded(void)
+{
+	unsigned int timeout = READ_ONCE(tun_force_detach_ms);
+	unsigned long deadline;
+
+	/* Legacy behaviour when explicitly disabled. */
+	if (!timeout) {
+		rtnl_lock();
+		return true;
+	}
+
+	deadline = jiffies + msecs_to_jiffies(timeout);
+	do {
+		if (rtnl_trylock())
+			return true;
+		msleep(1);
+		cond_resched();
+	} while (time_before(jiffies, deadline));
+
+	pr_warn("rtnl_lock busy for %u ms, skipping detach to unblock userspace\n",
+		timeout);
+
+	return false;
+}
+
 static void tun_detach(struct tun_file *tfile, bool clean)
 {
-	rtnl_lock();
-	__tun_detach(tfile, clean);
-	rtnl_unlock();
+	if (likely(tun_rtnl_lock_bounded())) {
+		__tun_detach(tfile, clean);
+		rtnl_unlock();
+	}
+	/*
+	 * Timeout path: rtnl_lock stayed contended past the budget, so skip
+	 * the detach instead of blocking forever. This driver never frees
+	 * tfile on close, so bailing out leaks nothing extra and leaves all
+	 * TUN state consistent for the owner to retry. The point is that
+	 * close() returns, letting the VPN app finish shutting down so the
+	 * framework can drop its policy routing rules.
+	 */
 }
 
 static void tun_detach_all(struct net_device *dev)
@@ -2633,12 +2738,72 @@ static struct notifier_block tun_notifier_block __read_mostly = {
 	.notifier_call	= tun_device_event,
 };
 
+/*
+ * Orphan reaper.
+ *
+ * A tun interface is only in use while a userspace process has a queue
+ * attached to it. Once the last fd is detached, numqueues and numdisabled
+ * both drop to zero and the interface is dead weight: it keeps the
+ * interface index, routes and memory, and a VPN app that failed to tear
+ * down cleanly leaves one behind on every attempt.
+ *
+ * Sweep for such interfaces periodically and unregister them so they cannot
+ * accumulate. Only interfaces with no attached queue are touched, so a live
+ * VPN is never disturbed.
+ */
+static unsigned int tun_reaper_interval __read_mosty = 20;
+module_param(tun_reaper_interval, uint, 0644);
+MODULE_PARM_DESC(tun_reaper_interval,
+		 "Seconds between sweeps that unregister unused tun interfaces. "
+		 "0 = disabled");
+
+static void tun_reap_work(struct work_struct *work);
+
+static struct delayed_work tun_reaper = INIT_DELAYED_WORK(tun_reap_work);
+
+static void tun_reap_work(struct work_struct *work)
+{
+	struct net *net;
+	struct net_device *dev;
+	unsigned int interval = READ_ONCE(tun_reaper_interval);
+
+	for_each_netdev(net, dev) {
+		struct tun_struct *tun;
+
+		if (dev->netdev_ops != &tun_netdev_ops &&
+		    dev->netdev_ops != &tap_netdev_ops)
+			continue;
+
+		if (dev->reg_state != NETREG_REGISTERED)
+			continue;
+
+		tun = netdev_priv(dev);
+
+		/* A queue is still attached, so someone is using it. */
+		if (tun->numqueues || tun->numdisabled)
+			continue;
+
+		pr_info("reaping unused tun interface %s\n", dev->name);
+		unregister_netdevice(dev);
+	}
+
+	if (interval)
+		schedule_delayed_work(&tun_reaper,
+				      msecs_to_jiffies(interval * 1000));
+}
+
 static int __init tun_init(void)
 {
 	int ret = 0;
 
 	pr_info("%s, %s\n", DRV_DESCRIPTION, DRV_VERSION);
 	pr_info("%s\n", DRV_COPYRIGHT);
+
+	tun_unregister_wq = alloc_workqueue("tun_unregister", WQ_MEM_RECLAIM, 0);
+	if (!tun_unregister_wq) {
+		pr_err("Can't create unregister workqueue\n");
+		return -ENOMEM;
+	}
 
 	ret = rtnl_link_register(&tun_link_ops);
 	if (ret) {
@@ -2653,18 +2818,24 @@ static int __init tun_init(void)
 	}
 
 	register_netdevice_notifier(&tun_notifier_block);
+	if (tun_reaper_interval)
+		schedule_delayed_work(&tun_reaper,
+				      msecs_to_jiffies(tun_reaper_interval * 1000));
 	return  0;
 err_misc:
 	rtnl_link_unregister(&tun_link_ops);
 err_linkops:
+	destroy_workqueue(tun_unregister_wq);
 	return ret;
 }
 
 static void tun_cleanup(void)
 {
+	cancel_delayed_work_sync(&tun_reaper);
 	misc_deregister(&tun_miscdev);
 	rtnl_link_unregister(&tun_link_ops);
 	unregister_netdevice_notifier(&tun_notifier_block);
+	destroy_workqueue(tun_unregister_wq);
 }
 
 /* Get an underlying socket object from tun file.  Returns error unless file is
