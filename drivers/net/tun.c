@@ -587,8 +587,38 @@ static void tun_unregister_work(struct work_struct *work)
 	unregister_netdevice(tun->dev);
 }
 
+/*
+ * Is it safe to unregister this device right now?
+ *
+ * unregister_netdevice() must wait for the reference count to reach zero
+ * while holding rtnl_lock(). When something still holds a reference the
+ * wait does not simply block: the unregister fails and takes the
+ * rollback_registered_many() path, which ends up in
+ * masq_device_event() -> nf_ct_iterate_cleanup() -> synchronize_net().
+ * Observed on device: that parked a worker while it still held
+ * rtnl_lock(), and reg_todo, addrconf_verify_work and wpa_supplicant all
+ * piled up behind it, freezing WiFi, hotspot and netlink outright.
+ *
+ * So only start a teardown that can complete immediately. If references
+ * remain, leave the interface registered: it is picked up by the reaper
+ * later, once whatever held it lets go. A leftover interface is a cosmetic
+ * leak; a wedged network stack is a dead device.
+ */
+static bool tun_can_unregister(struct net_device *dev)
+{
+	return !netdev_refcnt_read(dev);
+}
+
 static void tun_queue_unregister(struct tun_struct *tun)
 {
+	struct net_device *dev = tun->dev;
+
+	if (!tun_can_unregister(dev)) {
+		pr_warn("dev %s still referenced (%d), leaving it registered for the reaper\n",
+			dev->name, netdev_refcnt_read(dev));
+		return;
+	}
+
 	INIT_WORK(&tun->unregister_work, tun_unregister_work);
 	queue_work(tun_unregister_wq, &tun->unregister_work);
 }
@@ -2784,6 +2814,12 @@ static void tun_reap_work(struct work_struct *work)
 
 		/* A queue is still attached, so someone is using it. */
 		if (tun->numqueues || tun->numdisabled)
+			continue;
+
+		/* Still referenced: unregistering now would park holding
+		 * rtnl_lock() and freeze the network stack. Try next sweep.
+		 */
+		if (!tun_can_unregister(dev))
 			continue;
 
 		pr_info("reaping unused tun interface %s\n", dev->name);
