@@ -3447,19 +3447,6 @@ extern int		netdev_budget;
 /* Called by rtnetlink.c:rtnl_unlock() */
 void netdev_run_todo(void);
 
-/*
- * Diagnostic only: trace netdevice reference acquisitions/releases for TUN
- * devices so the holders of the reference count that blocks
- * unregister_netdevice() can be identified. See net/core/dev.c.
- *
- * Passing delta > 0 is a dev_hold(), delta < 0 is a dev_put(). The call
- * traces and then returns immediately for any device whose name does not
- * start with "tun", so non-TUN devices cost one string compare. The counter
- * itself is untouched: dev_hold() and dev_put() still adjust it exactly as
- * before, and netdev_refcnt_read() is unchanged.
- */
-void netdev_diag_ref(struct net_device *dev, int delta);
-
 /**
  *	dev_put - release reference to device
  *	@dev: network device
@@ -3468,10 +3455,8 @@ void netdev_diag_ref(struct net_device *dev, int delta);
  */
 static inline void dev_put(struct net_device *dev)
 {
-	if (dev) {
-		netdev_diag_ref(dev, -1);
+	if (dev)
 		this_cpu_dec(*dev->pcpu_refcnt);
-	}
 }
 
 /**
@@ -3482,10 +3467,8 @@ static inline void dev_put(struct net_device *dev)
  */
 static inline void dev_hold(struct net_device *dev)
 {
-	if (dev) {
-		netdev_diag_ref(dev, 1);
+	if (dev)
 		this_cpu_inc(*dev->pcpu_refcnt);
-	}
 }
 
 /* Carrier loss detection, dial on demand. The functions netif_carrier_on
