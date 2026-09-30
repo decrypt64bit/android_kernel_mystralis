@@ -7926,6 +7926,52 @@ int netdev_refcnt_read(const struct net_device *dev)
 }
 EXPORT_SYMBOL(netdev_refcnt_read);
 
+/*
+ * Diagnostic only. Records which subsystem takes and releases netdevice
+ * references, filtered to TUN devices.
+ *
+ * Context: a VPN session on this device leaves its TUN netdevice registered
+ * because __tun_detach() skips unregister_netdevice() while the reference
+ * count is non-zero (measured at 49). This exists to identify the holders.
+ *
+ * The trace is a full stack dump, far too expensive to emit for every
+ * netdevice, hence the name filter: only names starting with "tun" are
+ * traced and everything else returns after one compare. There is no rate
+ * limiting, because the point is to see every distinct acquisition site and
+ * a device that legitimately holds references will show the same stack each
+ * time. dmesg is the buffer of record here.
+ */
+#define NETDEV_DIAG_NAME_LEN 4		/* "tun" + NUL */
+
+void netdev_diag_ref(struct net_device *dev, int delta)
+{
+	/* not yet initialised, or not a TUN device: do nothing */
+	if (!dev || !dev->pcpu_refcnt)
+		return;
+	if (strncmp(dev->name, "tun", NETDEV_DIAG_NAME_LEN - 1))
+		return;
+
+	/*
+	 * Print before the counter changes, so the reported value is the
+	 * count as it stood on entry.
+	 */
+	pr_info("netdev_diag: %s %s refcnt_before=%d cpu=%d pid=%d comm=%s\n",
+		dev->name,
+		delta > 0 ? "HOLD" : "PUT",
+		netdev_refcnt_read(dev),
+		raw_smp_processor_id(),
+		current->pid,
+		current->comm);
+
+	/*
+	 * Full stack so the acquiring subsystem can be identified. This runs
+	 * from arbitrary contexts, including softirq, so it only uses
+	 * pr_info() and dump_stack(), neither of which allocates.
+	 */
+	dump_stack();
+}
+EXPORT_SYMBOL(netdev_diag_ref);
+
 /**
  * netdev_wait_allrefs - wait until all references are gone.
  * @dev: target net_device
