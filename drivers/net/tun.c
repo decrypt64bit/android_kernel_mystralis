@@ -646,45 +646,59 @@ static void __tun_detach(struct tun_file *tfile, bool clean)
 						       tfile, tun);
 
 				/*
-				 * Bring the interface down before tearing
-				 * it down. Taking it down makes the kernel
-				 * flush the routes pointing at it, and those
-				 * routes are what hold the last device
-				 * references.
+				 * Enter unregister unconditionally.
 				 *
-				 * Without this the teardown is skipped
-				 * whenever anything still references the
-				 * device: unregister_netdevice() would
-				 * otherwise park in netdev_wait_allrefs()
-				 * holding rtnl_lock(), hanging the closing
-				 * process and blocking WiFi, hotspot and
-				 * netlink behind the same lock.
+				 * The remaining references are legitimate
+				 * and balanced: they are dominated by tun's
+				 * own tun_get()/tun_put() pairs around
+				 * read/poll/write on /dev/net/tun, plus dst
+				 * and neighbour cache entries. Requiring
+				 * the count to be zero here is self
+				 * blocking: the count can only reach zero
+				 * via the drain inside unregister, which is
+				 * only reached once this gate is passed.
 				 *
-				 * A VPN leaves ~50 routes behind, so without
-				 * the down the interface never went away and
-				 * the framework never finished tearing the
-				 * VPN down, leaving it stuck connected.
+				 * unregister_netdevice() is written for
+				 * this. It does not require a zero count;
+				 * it defers the device to the netdev todo,
+				 * where netdev_wait_allrefs() waits the
+				 * count out (net/core/dev.c). The wait runs
+				 * without rtnl_lock, and rtnl_lock has
+				 * already been dropped by tun_detach() by
+				 * the time the todo executes, so a device
+				 * still holding references cannot stall
+				 * route operations behind this call.
+				 *
+				 * The wait is bounded by how long the last
+				 * holder takes, and netdev_wait_allrefs()
+				 * reports a stuck device in dmesg every 10s
+				 * if that is ever violated.
+*/
+
+				/*
+				 * Bring the interface down first. This flushes
+				 * the routes pointing at the device, which is
+				 * what lets the reference count in
+				 * netdev_wait_allrefs() actually reach zero.
+				 *
+				 * Order matters: unregister_netdevice() marks the
+				 * device NETREG_UNREGISTERING and defers the
+				 * free to the netdev todo, so a later
+				 * __dev_change_flags() here would be a use of a
+				 * device that is already being torn down.
 				 */
 				if (tun->dev->flags & IFF_UP)
 					__dev_change_flags(tun->dev,
 							   tun->dev->flags & ~IFF_UP);
 
-				if (!netdev_refcnt_read(tun->dev)) {
-					tun_diag_detach_report("unregistering",
-							       tfile, tun);
-					unregister_netdevice(tun->dev);
-				} else {
-					/*
-					 * Diagnostic only. The refcount is
-					 * still honoured: we do not unregister
-					 * here, and the interface stays
-					 * registered exactly as before. This
-					 * line just makes the skipped teardown
-					 * and its reason visible in dmesg.
-					 */
-					tun_diag_detach_report("BLOCKED: refcnt!=0, NOT unregistering",
-							       tfile, tun);
-				}
+				pr_info("tun_diag: unregistering %s refcnt=%d reg_state=%d dev_flags=0x%x numqueues=%u numdisabled=%u\n",
+					tun->dev->name,
+					netdev_refcnt_read(tun->dev),
+					tun->dev->reg_state,
+					tun->dev->flags,
+					tun->numqueues,
+					tun->numdisabled);
+				unregister_netdevice(tun->dev);
 			} else {
 				/*
 				 * Diagnostic only. A gate other than the
