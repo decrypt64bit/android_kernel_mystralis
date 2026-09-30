@@ -541,6 +541,62 @@ static void tun_cleanup_tx_array(struct tun_file *tfile)
 	}
 }
 
+/*
+ * Diagnostic only: report every input to the unregister decision in
+ * __tun_detach() below, plus which gate (if any) prevented
+ * unregister_netdevice().
+ *
+ * This exists because a VPN teardown on this device leaves a registered
+ * netdevice behind: after the TUN fd is closed and the interface is DOWN,
+ * tun0..tunN stay present in /sys/class/net. __tun_detach() only calls
+ * unregister_netdevice() when every gate passes, and it silently does
+ * nothing when one fails, so the failure is invisible without this.
+ *
+ * It changes no behaviour: the refcount check is still authoritative and
+ * unregister_netdevice() is still called under exactly the original
+ * conditions. Every value is read once and reused so the log cannot race
+ * with the values the real decision uses.
+ */
+static void tun_diag_detach_report(const char *stage,
+				   struct tun_file *tfile,
+				   struct tun_struct *tun)
+{
+	struct net_device *dev = tun ? tun->dev : NULL;
+	unsigned int refcnt = dev ? netdev_refcnt_read(dev) : 0;
+	int reg_state = dev ? dev->reg_state : -1;
+	bool gate_persist = tun ? !!(tun->flags & IFF_PERSIST) : false;
+	bool gate_queues = tun ? (tun->numqueues != 0) : false;
+	bool gate_disabled = tun ? (tun->numdisabled != 0) : false;
+	bool gate_refcnt = refcnt != 0;
+	const char *failed = NULL;
+
+	if (!tun)
+		failed = "no-tun (tfile->tun already NULL)";
+	else if (gate_queues)
+		failed = "numqueues";
+	else if (gate_disabled)
+		failed = "numdisabled";
+	else if (gate_persist)
+		failed = "IFF_PERSIST";
+	else if (reg_state != NETREG_REGISTERED)
+		failed = "reg_state";
+	else if (gate_refcnt)
+		failed = "netdev_refcnt";
+
+	pr_info("tun_diag: %s fd=%p ifname=%s numqueues=%u numdisabled=%u tun_flags=0x%x IFF_PERSIST=%u dev_flags=0x%x IFF_UP=%u reg_state=%d refcnt=%u -> %s\n",
+		stage, tfile,
+		dev ? dev->name : "(none)",
+		tun ? tun->numqueues : 0,
+		tun ? tun->numdisabled : 0,
+		tun ? tun->flags : 0,
+		(bool)gate_persist,
+		dev ? dev->flags : 0,
+		dev ? (!!(dev->flags & IFF_UP)) : 0,
+		reg_state,
+		refcnt,
+		failed ? failed : "WILL UNREGISTER");
+}
+
 static void __tun_detach(struct tun_file *tfile, bool clean)
 {
 	struct tun_file *ntfile;
@@ -581,6 +637,15 @@ static void __tun_detach(struct tun_file *tfile, bool clean)
 			if (!(tun->flags & IFF_PERSIST) &&
 			    tun->dev->reg_state == NETREG_REGISTERED) {
 				/*
+				 * All gates passed. Record the exact state we
+				 * are about to act on, before the IFF_UP
+				 * transition below so the refcount and flags
+				 * correspond to the real decision point.
+				 */
+				tun_diag_detach_report("pre-unregister",
+						       tfile, tun);
+
+				/*
 				 * Bring the interface down before tearing
 				 * it down. Taking it down makes the kernel
 				 * flush the routes pointing at it, and those
@@ -604,9 +669,35 @@ static void __tun_detach(struct tun_file *tfile, bool clean)
 					__dev_change_flags(tun->dev,
 							   tun->dev->flags & ~IFF_UP);
 
-				if (!netdev_refcnt_read(tun->dev))
+				if (!netdev_refcnt_read(tun->dev)) {
+					tun_diag_detach_report("unregistering",
+							       tfile, tun);
 					unregister_netdevice(tun->dev);
+				} else {
+					/*
+					 * Diagnostic only. The refcount is
+					 * still honoured: we do not unregister
+					 * here, and the interface stays
+					 * registered exactly as before. This
+					 * line just makes the skipped teardown
+					 * and its reason visible in dmesg.
+					 */
+					tun_diag_detach_report("BLOCKED: refcnt!=0, NOT unregistering",
+							       tfile, tun);
+				}
+			} else {
+				/*
+				 * Diagnostic only. A gate other than the
+				 * refcount failed, so unregister is never
+				 * reached. Report which one.
+				 */
+				tun_diag_detach_report("BLOCKED: outer gate, NOT unregistering",
+						       tfile, tun);
 			}
+		} else {
+			/* Diagnostic only: outer-most gate failed. */
+			tun_diag_detach_report("BLOCKED: tun/queue gate, NOT unregistering",
+					       tfile, tun);
 		}
 		tun_cleanup_tx_array(tfile);
 		sock_put(&tfile->sk);
@@ -2487,6 +2578,11 @@ static int tun_chr_close(struct inode *inode, struct file *file)
 {
 	struct tun_file *tfile = file->private_data;
 
+	/*
+	 * Diagnostic only: mark the entry point so the pre/post lines emitted
+	 * by __tun_detach() can be tied to a specific close.
+	 */
+	pr_info("tun_diag: tun_chr_close fd=%p\n", tfile);
 	tun_detach(tfile, true);
 
 	return 0;
