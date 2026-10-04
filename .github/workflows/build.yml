@@ -27,16 +27,21 @@ env:
   PROTON_CLANG_REPO: "https://github.com/kdrag0n/proton-clang.git"
   ANYKERNEL_REPO: "https://github.com/dain09/AnyKernel3.git"
   # Hookless KSU driver (backslashxx/KernelSU line, KSU_TAMPER_SYSCALL_TABLE,
-  # no KPROBES dependency). The device was originally flashed from the manager
-  # APK KernelSU_v3.3.0-52_32653 (driver reported KSU_VERSION=32651).
+  # no KPROBES dependency).
   #
-  # Upstream backslashxx/KernelSU has NO "hookless" ref and never published a
-  # v3.3.0-52 tag, so the stock setup.sh from that repo can no longer resolve the
-  # old pin - it hardcodes "git clone https://github.com/backslashxx/KernelSU".
-  # The hookless line lives on this fork instead, so the driver is integrated
-  # inline below rather than by piping that script in.
-  KERNELSU_REPO: "https://github.com/dain09/KernelSU"
-  KERNELSU_SETUP_BRANCH: hookless
+  # This was pinned to "v3.3.0-52", a ref that does not exist in this repo or the
+  # upstream one (newest published tag is v3.3.0-56), so the Integrate KernelSU
+  # step hard-failed and EVERY build on EVERY branch died before the compiler:
+  #   error: pathspec 'v3.3.0-52' did not match any file(s) known to git
+  #
+  # "32651" is the build-number tag that reports KSU_VERSION=32651, which is the
+  # driver the device is currently running (and what the manager APK
+  # KernelSU_v3.3.0-52_32653 was matched against). Pinning it keeps the driver
+  # byte-for-byte identical to what's already flashed - no version delta.
+  # Do NOT point this at dain09/KernelSU@hookless: that builds KSU_VERSION=32628,
+  # i.e. a DOWNGRADE against the installed manager.
+  KERNELSU_REPO: "https://github.com/backslashxx/KernelSU"
+  KERNELSU_SETUP_BRANCH: 32651
   KBUILD_BUILD_USER: "@decrypt64bit"
   KBUILD_BUILD_HOST: "ubuntu-24.04"
 
