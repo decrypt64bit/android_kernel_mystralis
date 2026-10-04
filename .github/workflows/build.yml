@@ -28,15 +28,14 @@ env:
   ANYKERNEL_REPO: "https://github.com/dain09/AnyKernel3.git"
   # Hookless KSU driver (backslashxx/KernelSU line, KSU_TAMPER_SYSCALL_TABLE,
   # no KPROBES dependency). The device was originally flashed from the manager
-  # APK KernelSU_v3.3.0-52_32653 (driver reported KSU_VERSION=32651), but that
-  # ref no longer exists upstream - see the branch pin below.
-  KERNELSU_SETUP: "https://raw.githubusercontent.com/dain09/KernelSU/refs/heads/hookless/kernel/setup.sh"
-  # KernelSU is tracked by branch. The v3.3.0-52 ref that used to be pinned here
-  # was removed from dain09/KernelSU, which made this step (and therefore EVERY
-  # build on EVERY branch) fail with:
-  #   error: pathspec 'v3.3.0-52' did not match any file(s) known to git
-  # "hookless" is the only ref that still exists on that remote. Track its head
-  # and re-pin to a tag/commit here if upstream re-publishes a named release.
+  # APK KernelSU_v3.3.0-52_32653 (driver reported KSU_VERSION=32651).
+  #
+  # Upstream backslashxx/KernelSU has NO "hookless" ref and never published a
+  # v3.3.0-52 tag, so the stock setup.sh from that repo can no longer resolve the
+  # old pin - it hardcodes "git clone https://github.com/backslashxx/KernelSU".
+  # The hookless line lives on this fork instead, so the driver is integrated
+  # inline below rather than by piping that script in.
+  KERNELSU_REPO: "https://github.com/dain09/KernelSU"
   KERNELSU_SETUP_BRANCH: hookless
   KBUILD_BUILD_USER: "@decrypt64bit"
   KBUILD_BUILD_HOST: "ubuntu-24.04"
@@ -96,14 +95,18 @@ jobs:
 
       - name: Integrate KernelSU (hookless)
         run: |
-          curl -LSs "$KERNELSU_SETUP" | bash -s $KERNELSU_SETUP_BRANCH
-          # setup.sh silently falls back to the default branch when its
-          # checkout fails ("Checkout default branch"), so enforce the pin
-          # explicitly here. The step fails loudly if this doesn't work.
-          cd KernelSU
-          git fetch origin "$KERNELSU_SETUP_BRANCH" || git fetch origin
-          git checkout "$KERNELSU_SETUP_BRANCH"
-          git rev-parse HEAD
+          set -eu
+          # Inline equivalent of kernel/setup.sh, but cloning KERNELSU_REPO
+          # instead of the backslashxx URL that script hardcodes.
+          git clone --depth 1 -b "$KERNELSU_SETUP_BRANCH" "$KERNELSU_REPO" KernelSU
+          git -C KernelSU rev-parse HEAD
+          DRIVER_DIR=drivers
+          test -d "$DRIVER_DIR" || { echo "no $DRIVER_DIR"; exit 1; }
+          ln -sf "$(realpath --relative-to="$DRIVER_DIR" "$GITHUB_WORKSPACE/KernelSU/kernel")" "$DRIVER_DIR/kernelsu"
+          grep -q "kernelsu" "$DRIVER_DIR/Makefile" || printf "\nobj-\$(CONFIG_KSU) += kernelsu/\n" >> "$DRIVER_DIR/Makefile"
+          grep -q 'source "drivers/kernelsu/Kconfig"' "$DRIVER_DIR/Kconfig" || sed -i '/endmenu/i source "drivers/kernelsu/Kconfig"' "$DRIVER_DIR/Kconfig"
+          echo "--- Makefile tail ---"; tail -3 "$DRIVER_DIR/Makefile"
+          echo "--- Kconfig around endmenu ---"; grep -n -B1 -A1 'kernelsu' "$DRIVER_DIR/Kconfig"
 
       - name: Configure and Build Kernel
         env:
