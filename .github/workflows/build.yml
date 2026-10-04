@@ -26,12 +26,18 @@ env:
   KERNEL_VARIANT: "mystralis"
   PROTON_CLANG_REPO: "https://github.com/kdrag0n/proton-clang.git"
   ANYKERNEL_REPO: "https://github.com/dain09/AnyKernel3.git"
-  # Hookless KSU driver (backslashxx/KernelSU). Pinned to v3.3.0-52 - the
-  # newest commit on the hookless line (KSU_TAMPER_SYSCALL_TABLE, no KPROBES
-  # dependency) and the exact repo state the manager APK
-  # KernelSU_v3.3.0-52_32653 was built from. Driver reports KSU_VERSION=32651.
+  # Hookless KSU driver (backslashxx/KernelSU line, KSU_TAMPER_SYSCALL_TABLE,
+  # no KPROBES dependency). The device was originally flashed from the manager
+  # APK KernelSU_v3.3.0-52_32653 (driver reported KSU_VERSION=32651), but that
+  # ref no longer exists upstream - see the branch pin below.
   KERNELSU_SETUP: "https://raw.githubusercontent.com/dain09/KernelSU/refs/heads/hookless/kernel/setup.sh"
-  KERNELSU_SETUP_BRANCH: v3.3.0-52
+  # KernelSU is tracked by branch. The v3.3.0-52 ref that used to be pinned here
+  # was removed from dain09/KernelSU, which made this step (and therefore EVERY
+  # build on EVERY branch) fail with:
+  #   error: pathspec 'v3.3.0-52' did not match any file(s) known to git
+  # "hookless" is the only ref that still exists on that remote. Track its head
+  # and re-pin to a tag/commit here if upstream re-publishes a named release.
+  KERNELSU_SETUP_BRANCH: hookless
   KBUILD_BUILD_USER: "@decrypt64bit"
   KBUILD_BUILD_HOST: "ubuntu-24.04"
 
