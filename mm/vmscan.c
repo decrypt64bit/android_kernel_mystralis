@@ -2359,14 +2359,14 @@ static bool positive_ctrl_err(struct ctrl_pos *sp, struct ctrl_pos *pv)
 /* protect pages accessed multiple times through file descriptors */
 static int page_inc_gen(struct lruvec *lruvec, struct page *page, bool reclaiming)
 {
-	int type = page_is_file_lru(page);
+	int type = page_is_file_cache(page);
 	struct lru_gen_struct *lrugen = &lruvec->lrugen;
 	int new_gen, old_gen = lru_gen_from_seq(lrugen->min_seq[type]);
-	unsigned long new_flags, old_flags = READ_ONCE(page->flags);
+	unsigned long new_flags, old_flags;
 
-	VM_WARN_ON_ONCE_PAGE(!(old_flags & LRU_GEN_MASK), page);
-
-	do {
+	for (;;) {
+		old_flags = READ_ONCE(page->flags);
+		VM_WARN_ON_ONCE_PAGE(!(old_flags & LRU_GEN_MASK), page);
 		new_gen = (old_gen + 1) % MAX_NR_GENS;
 
 		new_flags = old_flags & ~(LRU_GEN_MASK | LRU_REFS_MASK | LRU_REFS_FLAGS);
@@ -2374,7 +2374,9 @@ static int page_inc_gen(struct lruvec *lruvec, struct page *page, bool reclaimin
 		/* for end_page_writeback() */
 		if (reclaiming)
 			new_flags |= BIT(PG_reclaim);
-	} while (!try_cmpxchg(&page->flags, &old_flags, new_flags));
+		if (cmpxchg(&page->flags, old_flags, new_flags) == old_flags)
+			break;
+	}
 
 	lru_gen_update_size(lruvec, page, old_gen, new_gen);
 
@@ -2586,7 +2588,7 @@ static bool sort_page(struct lruvec *lruvec, struct page *page, int tier_idx)
 {
 	bool success;
 	int gen = page_lru_gen(page);
-	int type = page_is_file_lru(page);
+	int type = page_is_file_cache(page);
 	int zone = page_zonenum(page);
 	int delta = hpage_nr_pages(page);
 	int refs = page_lru_refs(page);
@@ -2657,7 +2659,7 @@ static bool isolate_page(struct lruvec *lruvec, struct page *page, struct scan_c
 		return false;
 
 	/* raced with another isolation */
-	if (!TestClearPageLRU(page)) {
+	if (!test_and_clear_bit(PG_lru, &page->flags)) {
 		put_page(page);
 		return false;
 	}
@@ -2708,7 +2710,7 @@ static int scan_pages(struct lruvec *lruvec, struct scan_control *sc,
 
 			VM_WARN_ON_ONCE_PAGE(PageUnevictable(page), page);
 			VM_WARN_ON_ONCE_PAGE(PageActive(page), page);
-			VM_WARN_ON_ONCE_PAGE(page_is_file_lru(page) != type, page);
+			VM_WARN_ON_ONCE_PAGE(page_is_file_cache(page) != type, page);
 			VM_WARN_ON_ONCE_PAGE(page_zonenum(page) != zone, page);
 
 			scanned += delta;
