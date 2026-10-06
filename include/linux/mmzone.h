@@ -323,9 +323,6 @@ struct lru_gen_struct {
 	struct list_head lists[MAX_NR_GENS][ANON_AND_FILE][MAX_NR_ZONES];
 	/* the multi-gen LRU sizes, eventually consistent */
 	long nr_pages[MAX_NR_GENS][ANON_AND_FILE][MAX_NR_ZONES];
-	/* historical evictions and refaults, indexed by [hist][type][tier] */
-	atomic_long_t evicted[MAX_NR_GENS][ANON_AND_FILE][MAX_NR_TIERS];
-	atomic_long_t refaulted[MAX_NR_GENS][ANON_AND_FILE][MAX_NR_TIERS];
 	/* the exponential moving average of refaulted */
 	unsigned long avg_refaulted[ANON_AND_FILE][MAX_NR_TIERS];
 	/* the exponential moving average of evicted+protected */
