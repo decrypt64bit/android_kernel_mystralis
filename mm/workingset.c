@@ -270,8 +270,17 @@ static void lru_gen_refault(struct page *page, void *shadow)
 	rcu_read_lock();
 
 	memcg = page_memcg_rcu(page);
-	if (memcg_id != mem_cgroup_id(memcg))
-		goto unlock;
+	/*
+	 * In this 4.9 tree, an uncharged page can have no memcg pointer.
+	 * Resolve the shadow's ID in that case, as the legacy refault path
+	 * does, instead of passing NULL to mem_cgroup_id().
+	 */
+	if (!mem_cgroup_disabled()) {
+		if (!memcg)
+			memcg = mem_cgroup_from_id(memcg_id);
+		if (!memcg || memcg_id != mem_cgroup_id(memcg))
+			goto unlock;
+	}
 
 	lruvec = mem_cgroup_lruvec(memcg, pgdat);
 	lrugen = &lruvec->lrugen;
