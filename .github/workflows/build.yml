@@ -26,12 +26,6 @@ env:
   KERNEL_VARIANT: "mystralis"
   PROTON_CLANG_REPO: "https://github.com/kdrag0n/proton-clang.git"
   ANYKERNEL_REPO: "https://github.com/dain09/AnyKernel3.git"
-  # Hookless KSU driver (backslashxx/KernelSU). Pinned to v3.3.0-52 - the
-  # newest commit on the hookless line (KSU_TAMPER_SYSCALL_TABLE, no KPROBES
-  # dependency) and the exact repo state the manager APK
-  # KernelSU_v3.3.0-52_32653 was built from. Driver reports KSU_VERSION=32651.
-  KERNELSU_SETUP: "https://raw.githubusercontent.com/dain09/KernelSU/refs/heads/hookless/kernel/setup.sh"
-  KERNELSU_SETUP_BRANCH: v3.3.0-52
   KBUILD_BUILD_USER: "@decrypt64bit"
   KBUILD_BUILD_HOST: "ubuntu-24.04"
 
@@ -87,17 +81,6 @@ jobs:
       - name: Set up AnyKernel3
         run: |
           git clone --depth 1 -b r5p $ANYKERNEL_REPO .deps/AnyKernel3
-
-      - name: Integrate KernelSU (hookless)
-        run: |
-          curl -LSs "$KERNELSU_SETUP" | bash -s $KERNELSU_SETUP_BRANCH
-          # setup.sh silently falls back to the default branch when its
-          # checkout fails ("Checkout default branch"), so enforce the pin
-          # explicitly here. The step fails loudly if this doesn't work.
-          cd KernelSU
-          git fetch origin "$KERNELSU_SETUP_BRANCH" || git fetch origin
-          git checkout "$KERNELSU_SETUP_BRANCH"
-          git rev-parse HEAD
 
       - name: Configure and Build Kernel
         env:
@@ -209,7 +192,6 @@ jobs:
             | Kernel | 4.9.337-Mystralis |
             | Defconfig | `sdm670-perf_defconfig` |
             | Toolchain | proton-clang (kdrag0n) |
-            | Root | KernelSU (hookless) |
 
             ### Install
             Flash `*.zip` from the assets via AnyKernel3 from a custom recovery.
@@ -230,7 +212,6 @@ jobs:
             ### Credits
             - dain09 — `android_kernel_realme_sdm710`, AnyKernel3
             - Sultan Alsawaf — Simple LMK
-            - backslashxx — KernelSU (hookless)
             - kdrag0n — proton-clang
           files: |
             release/*.zip
