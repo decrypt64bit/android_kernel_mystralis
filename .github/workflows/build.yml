@@ -159,6 +159,26 @@ jobs:
             CROSS_COMPILE_ARM32="$TC_PATH/arm-linux-gnueabi-" \
             olddefconfig
 
+          grep -qx 'CONFIG_LRU_GEN=y' out/.config || {
+            echo "CONFIG_LRU_GEN must be enabled in the produced config" >&2
+            exit 1
+          }
+          if [ "$KERNEL_VERSION" = "ascension-SLMK" ]; then
+            grep -qx 'CONFIG_ANDROID_SIMPLE_LMK=y' out/.config || {
+              echo "Simple LMK variant unexpectedly disabled" >&2
+              exit 1
+            }
+            grep -qx 'CONFIG_ANDROID_SIMPLE_LMK_MINFREE=128' out/.config || {
+              echo "Simple LMK target must remain 128 MB" >&2
+              exit 1
+            }
+          else
+            grep -qx 'CONFIG_ANDROID_LOW_MEMORY_KILLER=y' out/.config || {
+              echo "Classic LMK diagnostic variant unexpectedly disabled" >&2
+              exit 1
+            }
+          fi
+
           make -j$(nproc --all) O=out ARCH=arm64 \
             CC="ccache $TC_PATH/clang" \
             LD="$TC_PATH/ld.lld" \
