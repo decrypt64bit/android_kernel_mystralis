@@ -1,6 +1,11 @@
 #ifndef _LINUX_MMZONE_H
 #define _LINUX_MMZONE_H
 
+/* Kept outside the bounds-generation guard for kernel/bounds.c. */
+#define MIN_NR_GENS		2U
+#define MAX_NR_GENS		4U
+#define MAX_NR_TIERS		4U
+
 #ifndef __ASSEMBLY__
 #ifndef __GENERATING_BOUNDS_H
 
@@ -253,9 +258,6 @@ struct zone_reclaim_stat {
  * accesses through page tables. This requires order_base_2(MAX_NR_GENS+1) bits
  * in page->flags.
  */
-#define MIN_NR_GENS		2U
-#define MAX_NR_GENS		4U
-
 /*
  * Each generation is divided into multiple tiers. A page accessed N times
  * through file descriptors is in tier order_base_2(N). A page in the first tier
@@ -276,9 +278,6 @@ struct zone_reclaim_stat {
  * accesses through file descriptors. This uses MAX_NR_TIERS-2 spare bits in
  * page->flags.
  */
-#define MAX_NR_TIERS		4U
-
-
 struct lruvec;
 
 #define LRU_GEN_MASK		((BIT(LRU_GEN_WIDTH) - 1) << LRU_GEN_PGOFF)
