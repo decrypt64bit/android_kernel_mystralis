@@ -1,6 +1,9 @@
 name: Build Mystralis Kernel
 
 on:
+  push:
+    branches:
+      - mystralis-mglru
   workflow_dispatch:
     inputs:
       publish_release:
