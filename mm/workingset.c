@@ -355,10 +355,12 @@ void workingset_refault(struct page *page, void *shadow)
 	bool workingset;
 	int memcgid;
 
+#ifdef CONFIG_LRU_GEN
 	if (lru_gen_enabled()) {
 		lru_gen_refault(page, shadow);
 		return;
 	}
+#endif
 
 	unpack_shadow(shadow, &memcgid, &pgdat, &eviction, &workingset);
 	eviction <<= bucket_order;
