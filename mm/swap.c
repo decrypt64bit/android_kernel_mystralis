@@ -599,7 +599,7 @@ static void lru_deactivate_file_fn(struct page *page, struct lruvec *lruvec,
 		 * The page's writeback ends up during pagevec
 		 * We moves tha page into tail of inactive.
 		 */
-		list_move_tail(&page->lru, &lruvec->lists[lru]);
+		lru_gen_rotate_page(lruvec, page, lru);
 		__count_vm_event(PGROTATED);
 	}
 

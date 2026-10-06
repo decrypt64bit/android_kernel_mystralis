@@ -243,6 +243,29 @@ static inline bool lru_gen_del_page(struct lruvec *lruvec, struct page *page, bo
 
 #endif /* CONFIG_LRU_GEN */
 
+/*
+ * Rotate a reclaimable page after writeback. With MGLRU enabled, the page is
+ * held on a generation list rather than one of lruvec->lists[].
+ */
+static inline void lru_gen_rotate_page(struct lruvec *lruvec, struct page *page,
+				       enum lru_list lru)
+{
+#ifdef CONFIG_LRU_GEN
+	if (lru_gen_enabled()) {
+		int gen = page_lru_gen(page);
+		int type = page_is_file_cache(page);
+		int zone = page_zonenum(page);
+
+		VM_WARN_ON_ONCE_PAGE(gen < 0 || gen >= MAX_NR_GENS, page);
+		if (gen >= 0 && gen < MAX_NR_GENS)
+			list_move_tail(&page->lru,
+				       &lruvec->lrugen.lists[gen][type][zone]);
+		return;
+	}
+#endif
+	list_move_tail(&page->lru, &lruvec->lists[lru]);
+}
+
 static __always_inline void add_page_to_lru_list(struct page *page,
 				struct lruvec *lruvec, enum lru_list lru)
 {
