@@ -353,7 +353,6 @@ static void __lru_cache_activate_page(struct page *page)
 	put_cpu_var(lru_add_pvec);
 }
 
-/*
 #ifdef CONFIG_LRU_GEN
 static void page_inc_refs(struct page *page)
 {
@@ -388,7 +387,7 @@ static void page_inc_refs(struct page *page)
 }
 #endif /* CONFIG_LRU_GEN */
 
-
+/*
  * Mark a page as having seen activity.
  *
  * inactive,unreferenced	->	inactive,referenced
