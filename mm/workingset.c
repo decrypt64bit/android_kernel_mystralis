@@ -381,8 +381,10 @@ void workingset_refault(struct page *page, void *shadow)
 	 * configurations instead.
 	 */
 	memcg = mem_cgroup_from_id(memcgid);
-	if (!mem_cgroup_disabled() && !memcg)
-		goto out;
+	if (!mem_cgroup_disabled() && !memcg) {
+		rcu_read_unlock();
+		return;
+	}
 	lruvec = mem_cgroup_lruvec(pgdat, memcg);
 	refault = atomic_long_read(&lruvec->inactive_age);
 	active_file = lruvec_lru_size(lruvec, LRU_ACTIVE_FILE, MAX_NR_ZONES);
@@ -406,15 +408,16 @@ void workingset_refault(struct page *page, void *shadow)
 	refault_distance = (refault - eviction) & EVICTION_MASK;
 
 	inc_node_state(pgdat, WORKINGSET_REFAULT);
-	goto out;
 
 	/*
 	 * Compare the distance to the existing workingset size. We
 	 * don't act on pages that couldn't stay resident even if all
 	 * the memory was available to the page cache.
 	 */
-	if (refault_distance > active_file)
-		goto out;
+	if (refault_distance > active_file) {
+		rcu_read_unlock();
+		return;
+	}
 
 	SetPageActive(page);
 	atomic_long_inc(&lruvec->inactive_age);
@@ -425,7 +428,7 @@ void workingset_refault(struct page *page, void *shadow)
 		SetPageWorkingset(page);
 		inc_node_state(pgdat, WORKINGSET_RESTORE);
 	}
-out:
+
 	rcu_read_unlock();
 }
 
