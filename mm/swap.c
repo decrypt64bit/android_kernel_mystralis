@@ -356,7 +356,7 @@ static void __lru_cache_activate_page(struct page *page)
 #ifdef CONFIG_LRU_GEN
 static void page_inc_refs(struct page *page)
 {
-	unsigned long new_flags, old_flags = READ_ONCE(page->flags);
+	unsigned long new_flags, old_flags;
 
 	if (PageUnevictable(page))
 		return;
@@ -372,14 +372,17 @@ static void page_inc_refs(struct page *page)
 	}
 
 	/* see the comment on MAX_NR_TIERS */
-	do {
+	for (;;) {
+		old_flags = READ_ONCE(page->flags);
 		new_flags = old_flags & LRU_REFS_MASK;
 		if (new_flags == LRU_REFS_MASK)
 			break;
 
 		new_flags += BIT(LRU_REFS_PGOFF);
 		new_flags |= old_flags & ~LRU_REFS_MASK;
-	} while (!try_cmpxchg(&page->flags, &old_flags, new_flags));
+		if (cmpxchg(&page->flags, old_flags, new_flags) == old_flags)
+			break;
+	}
 }
 #else
 static void page_inc_refs(struct page *page)
