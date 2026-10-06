@@ -288,6 +288,7 @@ struct lruvec;
 enum {
 	LRU_GEN_ANON,
 	LRU_GEN_FILE,
+	ANON_AND_FILE,
 };
 
 #define MIN_LRU_BATCH		BITS_PER_LONG
