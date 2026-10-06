@@ -406,6 +406,7 @@ void workingset_refault(struct page *page, void *shadow)
 	refault_distance = (refault - eviction) & EVICTION_MASK;
 
 	inc_node_state(pgdat, WORKINGSET_REFAULT);
+	goto out;
 
 	/*
 	 * Compare the distance to the existing workingset size. We
