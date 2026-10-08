@@ -1,4 +1,4 @@
-name: Build Mystralis XT Kernel
+name: Build Mystralis XT MGLRU Kernel
 
 on:
   push:
@@ -7,6 +7,7 @@ on:
       - mystralis-clean
       - mystralis-mglru
       - mystralis-rxt
+      - mystralis-rxt-mglru
       - rebel-5pro
       - rebel-xt
   workflow_dispatch:
@@ -27,11 +28,11 @@ env:
   KERNEL_IMAGE: "Image.gz-dtb"
   # In-kernel identity. This is what uname and the OS settings show, so it
   # carries no device suffix.
-  KERNEL_NAME: "Mystralis-XT"
+  KERNEL_NAME: "Mystralis-XT-mglru"
   # GitHub-facing identity. The branch, the zip and the release tag carry the
   # device so the two devices never publish identical names.
-  RELEASE_NAME: "Mystralis-XT"
-  KERNEL_VARIANT: "rxt"
+  RELEASE_NAME: "Mystralis-XT-mglru"
+  KERNEL_VARIANT: "rxt-mglru"
   PROTON_CLANG_REPO: "https://github.com/kdrag0n/proton-clang.git"
   ANYKERNEL_REPO: "https://github.com/dain09/AnyKernel3.git"
   # Hookless KSU driver (backslashxx/KernelSU line, KSU_TAMPER_SYSCALL_TABLE,
@@ -66,6 +67,8 @@ jobs:
         variant:
           - kernel_version: "ascension-SLMK"
           - kernel_version: "ascension"
+          # Boot-diagnostic control: same SLMK policy, with only MGLRU off.
+          - kernel_version: "ascension-SLMK-noMGLRU"
 
     steps:
       - name: Checkout kernel source
@@ -134,6 +137,10 @@ jobs:
             CROSS_COMPILE="$TC_PATH/aarch64-linux-gnu-" \
             $KERNEL_DEFCONFIG
 
+          if [ "$KERNEL_VERSION" = "ascension-SLMK-noMGLRU" ]; then
+            ./scripts/config --file out/.config --disable LRU_GEN
+          fi
+
           ./scripts/config --file out/.config \
              --set-str CONFIG_LOCALVERSION "-${KERNEL_NAME}-${KERNEL_VERSION}"
 
@@ -143,11 +150,19 @@ jobs:
             CROSS_COMPILE_ARM32="$TC_PATH/arm-linux-gnueabi-" \
             olddefconfig
 
-          grep -qx 'CONFIG_LRU_GEN=y' out/.config || {
-            echo "CONFIG_LRU_GEN must be enabled in the produced config" >&2
-            exit 1
-          }
-          if [ "$KERNEL_VERSION" = "ascension-SLMK" ]; then
+          if [ "$KERNEL_VERSION" = "ascension-SLMK-noMGLRU" ]; then
+            grep -qx '# CONFIG_LRU_GEN is not set' out/.config || {
+              echo "MGLRU control variant must have CONFIG_LRU_GEN disabled" >&2
+              exit 1
+            }
+          else
+            grep -qx 'CONFIG_LRU_GEN=y' out/.config || {
+              echo "CONFIG_LRU_GEN must be enabled in the normal variants" >&2
+              exit 1
+            }
+          fi
+          if [ "$KERNEL_VERSION" = "ascension-SLMK" ] || \
+             [ "$KERNEL_VERSION" = "ascension-SLMK-noMGLRU" ]; then
             grep -qx 'CONFIG_ANDROID_SIMPLE_LMK=y' out/.config || {
               echo "Simple LMK variant unexpectedly disabled" >&2
               exit 1
