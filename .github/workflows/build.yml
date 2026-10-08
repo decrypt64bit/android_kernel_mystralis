@@ -1,4 +1,4 @@
-name: Build Rebel Kernel
+name: Build Rebel XT MGLRU Kernel
 
 on:
   push:
@@ -9,7 +9,9 @@ on:
       - mystralis-rxt
       - mystralis-rxt-mglru
       - rebel-5pro
+      - rebel-5pro-mglru
       - rebel-xt
+      - rebel-xt-mglru
   workflow_dispatch:
     inputs:
       publish_release:
@@ -27,10 +29,10 @@ env:
   KERNEL_DEFCONFIG: "sdm670-perf_defconfig"
   KERNEL_IMAGE: "Image.gz-dtb"
   # In-kernel identity: uname and OS settings, no device suffix.
-  KERNEL_NAME: "Rebel"
+  KERNEL_NAME: "Rebel-XT-mglru"
   # GitHub-facing identity: branch, zip and release tag carry the device.
-  RELEASE_NAME: "Rebel-XT"
-  KERNEL_VARIANT: "rebel"
+  RELEASE_NAME: "Rebel-XT-mglru"
+  KERNEL_VARIANT: "rebel-xt-mglru"
   PROTON_CLANG_REPO: "https://github.com/kdrag0n/proton-clang.git"
   ANYKERNEL_REPO: "https://github.com/dain09/AnyKernel3.git"
   # KernelSU-Next (legacy branch). Pinned to the legacy branch HEAD so we
@@ -55,6 +57,8 @@ jobs:
         variant:
           - kernel_version: "Aetheris-SLMK"
           - kernel_version: "Aetheris"
+          # Boot-diagnostic control: same SLMK policy, with only MGLRU off.
+          - kernel_version: "Aetheris-SLMK-noMGLRU"
 
     steps:
       - name: Checkout kernel source
@@ -150,6 +154,10 @@ jobs:
             CROSS_COMPILE="$TC_PATH/aarch64-linux-gnu-" \
             $KERNEL_DEFCONFIG
 
+          if [ "$KERNEL_VERSION" = "Aetheris-SLMK-noMGLRU" ]; then
+            ./scripts/config --file out/.config --disable LRU_GEN
+          fi
+
           ./scripts/config --file out/.config \
              --set-str CONFIG_LOCALVERSION "-${KERNEL_NAME}-${KERNEL_VERSION}"
 
@@ -159,17 +167,21 @@ jobs:
             CROSS_COMPILE_ARM32="$TC_PATH/arm-linux-gnueabi-" \
             olddefconfig
 
-          grep -qx 'CONFIG_LRU_GEN=y' out/.config || {
-            echo "CONFIG_LRU_GEN must be enabled in the produced config" >&2
-            exit 1
-          }
-          if [ "$KERNEL_VERSION" = "ascension-SLMK" ]; then
-            grep -qx 'CONFIG_ANDROID_SIMPLE_LMK=y' out/.config || {
-              echo "Simple LMK variant unexpectedly disabled" >&2
+          if [ "$KERNEL_VERSION" = "Aetheris-SLMK-noMGLRU" ]; then
+            grep -qx '# CONFIG_LRU_GEN is not set' out/.config || {
+              echo "MGLRU control variant must have CONFIG_LRU_GEN disabled" >&2
               exit 1
             }
-            grep -qx 'CONFIG_ANDROID_SIMPLE_LMK_MINFREE=128' out/.config || {
-              echo "Simple LMK target must remain 128 MB" >&2
+          else
+            grep -qx 'CONFIG_LRU_GEN=y' out/.config || {
+              echo "CONFIG_LRU_GEN must be enabled in the normal variants" >&2
+              exit 1
+            }
+          fi
+          if [ "$KERNEL_VERSION" = "Aetheris-SLMK" ] || \
+             [ "$KERNEL_VERSION" = "Aetheris-SLMK-noMGLRU" ]; then
+            grep -qx 'CONFIG_ANDROID_SIMPLE_LMK=y' out/.config || {
+              echo "Simple LMK variant unexpectedly disabled" >&2
               exit 1
             }
           else
@@ -226,6 +238,9 @@ jobs:
   release:
     name: Publish Release
     needs: build
+    concurrency:
+      group: publish-release
+      cancel-in-progress: false
     if: >-
       ${{ (inputs.publish_release == true)
           || (github.event.inputs.publish_release == 'true') }}
