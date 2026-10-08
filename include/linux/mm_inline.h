@@ -208,10 +208,20 @@ static inline bool lru_gen_del_page(struct lruvec *lruvec, struct page *page, bo
 	VM_WARN_ON_ONCE_PAGE(PageActive(page), page);
 	VM_WARN_ON_ONCE_PAGE(PageUnevictable(page), page);
 
-	/* for migrate_page_states() */
+	/*
+	 * for migrate_page_states()
+	 *
+	 * Upstream re-reads gen from the return value of set_mask_bits(),
+	 * which there returns the *old* flags. This tree still has the 4.9
+	 * version, which returns the *new* flags with LRU_GEN_MASK already
+	 * cleared, so re-deriving gen from it would always yield -1. That
+	 * makes lru_gen_update_size() take its addition branch below and
+	 * increment instead of decrement, leaking the per-node/per-zone LRU
+	 * counters and lrugen->nr_pages without bound. Keep the gen that was
+	 * read above; set_mask_bits() still performs the flag update.
+	 */
 	flags = !reclaiming && lru_gen_is_active(lruvec, gen) ? BIT(PG_active) : 0;
-	flags = set_mask_bits(&page->flags, LRU_GEN_MASK, flags);
-	gen = ((flags & LRU_GEN_MASK) >> LRU_GEN_PGOFF) - 1;
+	set_mask_bits(&page->flags, LRU_GEN_MASK, flags);
 
 	lru_gen_update_size(lruvec, page, gen, -1);
 	list_del(&page->lru);
