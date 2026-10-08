@@ -7,6 +7,7 @@ on:
       - mystralis-clean
       - mystralis-mglru
       - mystralis-rxt
+      - mystralis-rxt-mglru
       - rebel-5pro
       - rebel-xt
   workflow_dispatch:
@@ -32,8 +33,11 @@ env:
   KERNEL_VARIANT: "rebel"
   PROTON_CLANG_REPO: "https://github.com/kdrag0n/proton-clang.git"
   ANYKERNEL_REPO: "https://github.com/dain09/AnyKernel3.git"
-  KERNELSU_SETUP: "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh"
-  KERNELSU_SETUP_BRANCH: v3.4.0-legacy
+  # KernelSU-Next (legacy branch). Pinned to the legacy branch HEAD so we
+  # always get the latest driver. KSU_MANUAL_HOOK is set in the defconfig;
+  # the kprobes and syscall-table hooks are both incompatible with 4.9.
+  KERNELSU_REPO: "https://github.com/KernelSU-Next/KernelSU-Next"
+  KERNELSU_SETUP_BRANCH: legacy
   KBUILD_BUILD_USER: "@decrypt64bit"
   KBUILD_BUILD_HOST: "ubuntu-24.04"
 
@@ -92,14 +96,45 @@ jobs:
 
       - name: Integrate KernelSU-Next (legacy)
         run: |
-          curl -LSs "$KERNELSU_SETUP" | bash -s $KERNELSU_SETUP_BRANCH
-          # setup.sh silently falls back to the default branch when its
-          # checkout fails ("Checkout default branch"), so enforce the pin
-          # explicitly. The step fails loudly if this doesn't work.
-          cd KernelSU-Next
-          git fetch origin "$KERNELSU_SETUP_BRANCH" || git fetch origin
-          git checkout "$KERNELSU_SETUP_BRANCH"
-          git rev-parse HEAD
+          set -eu
+          git clone --depth 1 -b "$KERNELSU_SETUP_BRANCH" "$KERNELSU_REPO" KernelSU-Next
+          git -C KernelSU-Next rev-parse HEAD
+          DRIVER_DIR=drivers
+          test -d "$DRIVER_DIR" || { echo "no $DRIVER_DIR"; exit 1; }
+          ln -sf "$(realpath --relative-to="$DRIVER_DIR" "$GITHUB_WORKSPACE/KernelSU-Next/kernel")" "$DRIVER_DIR/kernelsu"
+          grep -q "kernelsu" "$DRIVER_DIR/Makefile" || printf "\nobj-\$(CONFIG_KSU) += kernelsu/\n" >> "$DRIVER_DIR/Makefile"
+          grep -q 'source "drivers/kernelsu/Kconfig"' "$DRIVER_DIR/Kconfig" || sed -i '/endmenu/i source "drivers/kernelsu/Kconfig"' "$DRIVER_DIR/Kconfig"
+          echo "--- Makefile tail ---"; tail -3 "$DRIVER_DIR/Makefile"
+          echo "--- Kconfig around endmenu ---"; grep -n -B1 -A1 'kernelsu' "$DRIVER_DIR/Kconfig"
+
+          # Backport headers for 4.9.
+          #
+          # KSUN's tree targets Linux 5.9+ and includes headers that were
+          # split out of older ones after 4.9:
+          #   compiler_types.h                  -> split out of compiler.h
+          #   sched/signal.h, sched/task_stack.h,
+          #   sched/types.h, sched/user.h       -> split out of sched.h
+          #   pgtable.h                         -> arch specific, use asm/
+          #   hex.h                             -> include is unused, drop it
+          #   uapi/linux/sched/types.h          -> split out of uapi/linux/sched.h
+          #
+          # linux/sched/task.h is left alone: this kernel already has it.
+          find KernelSU-Next/kernel -name '*.[ch]' -exec sed -i \
+            -e 's|<linux/compiler_types\.h>|<linux/compiler.h>|g' \
+            -e 's|<linux/sched/signal\.h>|<linux/sched.h>|g' \
+            -e 's|<linux/sched/task_stack\.h>|<linux/sched.h>|g' \
+            -e 's|<linux/sched/types\.h>|<linux/sched.h>|g' \
+            -e 's|<linux/sched/user\.h>|<linux/sched.h>|g' \
+            -e 's|<uapi/linux/sched/types\.h>|<uapi/linux/sched.h>|g' \
+            -e 's|<linux/pgtable\.h>|<asm/pgtable.h>|g' \
+            -e '/#include <linux\/hex\.h>/d' {} +
+
+          # Fail loudly if any include that does not exist on 4.9 survived.
+          if grep -rEn 'linux/(compiler_types|hex|pgtable)\.h|linux/sched/(signal|task_stack|types|user)\.h|uapi/linux/sched/types\.h' \
+               KernelSU-Next/kernel --include='*.c' --include='*.h'; then
+            echo "::error::headers missing on 4.9 remain in the KSUN tree"
+            exit 1
+          fi
 
       - name: Configure and Build Kernel
         env:
@@ -169,37 +204,53 @@ jobs:
           path: artifacts/*
 
   release:
-    name: Publish Release (${{ matrix.variant.kernel_version }})
+    name: Publish Release
     needs: build
-    # Accept the checkbox from the UI and a string from the API/gh CLI, so a
-    # release is published whichever way the run was triggered.
     if: >-
       ${{ (inputs.publish_release == true)
           || (github.event.inputs.publish_release == 'true') }}
     runs-on: ubuntu-24.04
-    strategy:
-      fail-fast: false
-      matrix:
-        variant:
-          - kernel_version: "Aetheris-SLMK"
-          - kernel_version: "Aetheris"
     permissions:
       contents: write
     steps:
-      - name: Download Artifacts
+      - name: Download all build artifacts
         uses: actions/download-artifact@v8
         with:
-          name: kernel-build-artifacts-${{ matrix.variant.kernel_version }}
           path: release
+          merge-multiple: true
 
-      - name: Create Release
+      - name: Compute release tag
+        id: tag
+        run: |
+          TAG="Mystralis-Rebel-$(date -u +%Y-%m-%d)"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Release tag: $TAG"
+
+      - name: Clean old assets from today's release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ steps.tag.outputs.tag }}"
+          # If the release already exists, delete assets whose names match
+          # this branch's RELEASE_NAME so a same-day rebuild replaces them.
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "Release $TAG exists, cleaning old assets from this branch..."
+            gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' | \
+              grep "^${RELEASE_NAME}-" | while read -r asset; do
+                echo "  deleting $asset"
+                gh release delete-asset "$TAG" "$asset" --repo "$GITHUB_REPOSITORY" --yes || true
+              done
+          else
+            echo "Release $TAG does not exist yet, will be created."
+          fi
+
+      - name: Create or update release
         uses: softprops/action-gh-release@v3
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          tag_name: ${{ env.RELEASE_NAME }}-${{ matrix.variant.kernel_version }}-${{ github.run_number }}
-          name: ${{ env.RELEASE_NAME }}-${{ matrix.variant.kernel_version }}-${{ github.run_number }}
-          fail_on_unmatched_files: true
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: Mystralis/Rebel ${{ steps.tag.outputs.tag }}
           body: ""
+          fail_on_unmatched_files: false
           files: |
             release/*.zip
-            release/kernel.config
