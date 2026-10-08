@@ -9,7 +9,9 @@ on:
       - mystralis-rxt
       - mystralis-rxt-mglru
       - rebel-5pro
+      - rebel-5pro-mglru
       - rebel-xt
+      - rebel-xt-mglru
   workflow_dispatch:
     inputs:
       publish_release:
@@ -206,6 +208,9 @@ jobs:
   release:
     name: Publish Release
     needs: build
+    concurrency:
+      group: publish-release
+      cancel-in-progress: false
     if: >-
       ${{ (inputs.publish_release == true)
           || (github.event.inputs.publish_release == 'true') }}
