@@ -3,7 +3,15 @@ name: Build Mystralis Kernel
 on:
   push:
     branches:
+      - mystralis
+      - mystralis-clean
       - mystralis-mglru
+      - mystralis-rxt
+      - mystralis-rxt-mglru
+      - rebel-5pro
+      - rebel-5pro-mglru
+      - rebel-xt
+      - rebel-xt-mglru
   workflow_dispatch:
     inputs:
       publish_release:
@@ -22,29 +30,25 @@ env:
   KERNEL_IMAGE: "Image.gz-dtb"
   # In-kernel identity. This is what uname and the OS settings show, so it
   # carries no device suffix.
-  KERNEL_NAME: "Mystralis"
+  KERNEL_NAME: "Mystralis-mglru"
   # GitHub-facing identity. The branch, the zip and the release tag carry the
   # device so the two devices never publish identical names.
-  RELEASE_NAME: "Mystralis-5Pro"
-  KERNEL_VARIANT: "mystralis"
+  RELEASE_NAME: "Mystralis-mglru-5Pro"
+  KERNEL_VARIANT: "mglru"
   PROTON_CLANG_REPO: "https://github.com/kdrag0n/proton-clang.git"
   ANYKERNEL_REPO: "https://github.com/dain09/AnyKernel3.git"
   # Hookless KSU driver (backslashxx/KernelSU line, KSU_TAMPER_SYSCALL_TABLE,
   # no KPROBES dependency).
   #
-  # This was pinned to "v3.3.0-52", a ref that does not exist in this repo or the
-  # upstream one (newest published tag is v3.3.0-56), so the Integrate KernelSU
-  # step hard-failed and EVERY build on EVERY branch died before the compiler:
-  #   error: pathspec 'v3.3.0-52' did not match any file(s) known to git
+  # 32669 is the newest build-number tag (2026-10-08) and is on the uapi v5
+  # line: KERNEL_SU_UAPI_VERSION is 5 here, where the previous pin 32651
+  # reported 4. The first tag with uapi v5 is 32664.
   #
-  # "32651" is the build-number tag that reports KSU_VERSION=32651, which is the
-  # driver the device is currently running (and what the manager APK
-  # KernelSU_v3.3.0-52_32653 was matched against). Pinning it keeps the driver
-  # byte-for-byte identical to what's already flashed - no version delta.
-  # Do NOT point this at dain09/KernelSU@hookless: that builds KSU_VERSION=32628,
-  # i.e. a DOWNGRADE against the installed manager.
+  # Manager APK compatibility: a manager built against uapi v4 (such as
+  # KernelSU_v3.3.0-52_32653) will not talk to this driver. Flash a manager
+  # built against uapi v5 alongside this kernel or root will not work.
   KERNELSU_REPO: "https://github.com/backslashxx/KernelSU"
-  KERNELSU_SETUP_BRANCH: 32651
+  KERNELSU_SETUP_BRANCH: 32669
   KBUILD_BUILD_USER: "@decrypt64bit"
   KBUILD_BUILD_HOST: "ubuntu-24.04"
 
@@ -218,71 +222,56 @@ jobs:
           path: artifacts/*
 
   release:
-    name: Publish Release (${{ matrix.variant.kernel_version }})
+    name: Publish Release
     needs: build
-    # Accept the checkbox from the UI and a string from the API/gh CLI, so a
-    # release is published whichever way the run was triggered.
+    concurrency:
+      group: publish-release
+      cancel-in-progress: false
     if: >-
       ${{ (inputs.publish_release == true)
           || (github.event.inputs.publish_release == 'true') }}
     runs-on: ubuntu-24.04
-    strategy:
-      fail-fast: false
-      matrix:
-        variant:
-          - kernel_version: "ascension-SLMK"
-          - kernel_version: "ascension"
     permissions:
       contents: write
     steps:
-      - name: Download Artifacts
+      - name: Download all build artifacts
         uses: actions/download-artifact@v8
         with:
-          name: kernel-build-artifacts-${{ matrix.variant.kernel_version }}
           path: release
+          merge-multiple: true
 
-      - name: Create Release
+      - name: Compute release tag
+        id: tag
+        run: |
+          TAG="Mystralis-Rebel-$(date -u +%Y-%m-%d)"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Release tag: $TAG"
+
+      - name: Clean old assets from today's release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ steps.tag.outputs.tag }}"
+          # If the release already exists, delete assets whose names match
+          # this branch's RELEASE_NAME so a same-day rebuild replaces them.
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "Release $TAG exists, cleaning old assets from this branch..."
+            gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' | \
+              grep "^${RELEASE_NAME}-" | while read -r asset; do
+                echo "  deleting $asset"
+                gh release delete-asset "$TAG" "$asset" --repo "$GITHUB_REPOSITORY" --yes || true
+              done
+          else
+            echo "Release $TAG does not exist yet, will be created."
+          fi
+
+      - name: Create or update release
         uses: softprops/action-gh-release@v3
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          tag_name: Mystralis-5Pro-${{ matrix.variant.kernel_version }}-${{ github.run_number }}
-          name: Mystralis-5Pro-${{ matrix.variant.kernel_version }}-${{ github.run_number }}
-          fail_on_unmatched_files: true
-          body: |
-            **Mystralis-5Pro** kernel for Realme 5 Pro (RMX1971, Snapdragon 710, kernel 4.9.337).
-
-            Variant: `${{ matrix.variant.kernel_version }}` (run #${{ github.run_number }})
-
-            | | |
-            |---|---|
-            | Device | Realme 5 Pro (RMX1971) |
-            | SoC | Qualcomm Snapdragon 710 (SDM710) |
-            | Kernel | 4.9.337-Mystralis |
-            | Defconfig | `sdm670-perf_defconfig` |
-            | Toolchain | proton-clang (kdrag0n) |
-            | Root | KernelSU (hookless) |
-
-            ### Install
-            Flash `*.zip` from the assets via AnyKernel3 from a custom recovery.
-
-            ### Requirements and warnings
-            - **Back up your data and stock `boot.img` first.** A kernel flash
-              can brick a device, and a bad flash can make userdata
-              undecryptable.
-            - Built and tested on a **4 GB / 128 GB** unit. Other RAM/storage
-              configurations will behave differently.
-
-            ### Known issues
-            - A VPN app that fails to tear down cleanly can still leave a
-              stale interface behind. The kernel now sweeps unused TUN
-              interfaces, but a wedged app may need a reboot.
-            - OTA updates are untested and may not work.
-
-            ### Credits
-            - dain09 — `android_kernel_realme_sdm710`, AnyKernel3
-            - Sultan Alsawaf — Simple LMK
-            - backslashxx — KernelSU (hookless)
-            - kdrag0n — proton-clang
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: Mystralis/Rebel ${{ steps.tag.outputs.tag }}
+          body: ""
+          fail_on_unmatched_files: false
           files: |
             release/*.zip
-            release/kernel.config
