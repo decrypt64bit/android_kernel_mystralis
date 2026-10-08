@@ -1,6 +1,17 @@
 name: Build Mystralis XT Kernel
 
 on:
+  push:
+    branches:
+      - mystralis
+      - mystralis-clean
+      - mystralis-mglru
+      - mystralis-rxt
+      - mystralis-rxt-mglru
+      - rebel-5pro
+      - rebel-5pro-mglru
+      - rebel-xt
+      - rebel-xt-mglru
   workflow_dispatch:
     inputs:
       publish_release:
@@ -19,15 +30,28 @@ env:
   KERNEL_IMAGE: "Image.gz-dtb"
   # In-kernel identity. This is what uname and the OS settings show, so it
   # carries no device suffix.
-  KERNEL_NAME: "Mystralis"
+  KERNEL_NAME: "Mystralis-XT"
   # GitHub-facing identity. The branch, the zip and the release tag carry the
   # device so the two devices never publish identical names.
   RELEASE_NAME: "Mystralis-XT"
-  KERNEL_VARIANT: "mystralis"
+  KERNEL_VARIANT: "rxt"
   PROTON_CLANG_REPO: "https://github.com/kdrag0n/proton-clang.git"
   ANYKERNEL_REPO: "https://github.com/dain09/AnyKernel3.git"
-  KERNELSU_SETUP: "https://raw.githubusercontent.com/dain09/KernelSU/refs/heads/hookless/kernel/setup.sh"
-  KERNELSU_SETUP_BRANCH: v3.3.0-52
+  # Hookless KSU driver (backslashxx/KernelSU line, KSU_TAMPER_SYSCALL_TABLE,
+  # no KPROBES dependency). Same repo mystralis and mystralis-mglru use, and
+  # deliberately NOT dain09/KernelSU: that ref no longer exists upstream, so
+  # the old `curl setup.sh | bash` path hard-failed before the compiler and
+  # every build on every branch died.
+  #
+  # 32669 is the newest build-number tag (2026-10-08) and is on the uapi v5
+  # line: KERNEL_SU_UAPI_VERSION is 5 here, where the previous pin 32651
+  # reported 4. The first tag with uapi v5 is 32664.
+  #
+  # Manager APK compatibility: a manager built against uapi v4 (such as
+  # KernelSU_v3.3.0-52_32653) will not talk to this driver. Flash a manager
+  # built against uapi v5 alongside this kernel or root will not work.
+  KERNELSU_REPO: "https://github.com/backslashxx/KernelSU"
+  KERNELSU_SETUP_BRANCH: 32669
   KBUILD_BUILD_USER: "@decrypt64bit"
   KBUILD_BUILD_HOST: "ubuntu-24.04"
 
@@ -86,14 +110,18 @@ jobs:
 
       - name: Integrate KernelSU (hookless)
         run: |
-          curl -LSs "$KERNELSU_SETUP" | bash -s $KERNELSU_SETUP_BRANCH
-          # setup.sh silently falls back to the default branch when its
-          # checkout fails ("Checkout default branch"), so enforce the pin
-          # explicitly. The step fails loudly if this doesn't work.
-          cd KernelSU
-          git fetch origin "$KERNELSU_SETUP_BRANCH" || git fetch origin
-          git checkout "$KERNELSU_SETUP_BRANCH"
-          git rev-parse HEAD
+          set -eu
+          # Inline equivalent of kernel/setup.sh, but cloning KERNELSU_REPO
+          # instead of the backslashxx URL that script hardcodes.
+          git clone --depth 1 -b "$KERNELSU_SETUP_BRANCH" "$KERNELSU_REPO" KernelSU
+          git -C KernelSU rev-parse HEAD
+          DRIVER_DIR=drivers
+          test -d "$DRIVER_DIR" || { echo "no $DRIVER_DIR"; exit 1; }
+          ln -sf "$(realpath --relative-to="$DRIVER_DIR" "$GITHUB_WORKSPACE/KernelSU/kernel")" "$DRIVER_DIR/kernelsu"
+          grep -q "kernelsu" "$DRIVER_DIR/Makefile" || printf "\nobj-\$(CONFIG_KSU) += kernelsu/\n" >> "$DRIVER_DIR/Makefile"
+          grep -q 'source "drivers/kernelsu/Kconfig"' "$DRIVER_DIR/Kconfig" || sed -i '/endmenu/i source "drivers/kernelsu/Kconfig"' "$DRIVER_DIR/Kconfig"
+          echo "--- Makefile tail ---"; tail -3 "$DRIVER_DIR/Makefile"
+          echo "--- Kconfig around endmenu ---"; grep -n -B1 -A1 'kernelsu' "$DRIVER_DIR/Kconfig"
 
       - name: Configure and Build Kernel
         env:
@@ -163,74 +191,56 @@ jobs:
           path: artifacts/*
 
   release:
-    name: Publish Release (${{ matrix.variant.kernel_version }})
+    name: Publish Release
     needs: build
-    # Accept the checkbox from the UI and a string from the API/gh CLI, so a
-    # release is published whichever way the run was triggered.
+    concurrency:
+      group: publish-release
+      cancel-in-progress: false
     if: >-
       ${{ (inputs.publish_release == true)
           || (github.event.inputs.publish_release == 'true') }}
     runs-on: ubuntu-24.04
-    strategy:
-      fail-fast: false
-      matrix:
-        variant:
-          - kernel_version: "ascension-SLMK"
-          - kernel_version: "ascension"
     permissions:
       contents: write
     steps:
-      - name: Download Artifacts
+      - name: Download all build artifacts
         uses: actions/download-artifact@v8
         with:
-          name: kernel-build-artifacts-${{ matrix.variant.kernel_version }}
           path: release
+          merge-multiple: true
 
-      - name: Create Release
+      - name: Compute release tag
+        id: tag
+        run: |
+          TAG="Mystralis-Rebel-$(date -u +%Y-%m-%d)"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Release tag: $TAG"
+
+      - name: Clean old assets from today's release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ steps.tag.outputs.tag }}"
+          # If the release already exists, delete assets whose names match
+          # this branch's RELEASE_NAME so a same-day rebuild replaces them.
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "Release $TAG exists, cleaning old assets from this branch..."
+            gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' | \
+              grep "^${RELEASE_NAME}-" | while read -r asset; do
+                echo "  deleting $asset"
+                gh release delete-asset "$TAG" "$asset" --repo "$GITHUB_REPOSITORY" --yes || true
+              done
+          else
+            echo "Release $TAG does not exist yet, will be created."
+          fi
+
+      - name: Create or update release
         uses: softprops/action-gh-release@v3
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          tag_name: Mystralis-XT-${{ matrix.variant.kernel_version }}-${{ github.run_number }}
-          name: Mystralis-XT-${{ matrix.variant.kernel_version }}-${{ github.run_number }}
-          fail_on_unmatched_files: true
-          body: |
-            **Rebel** kernel for Realme XT (RMX1921, Snapdragon 710, kernel 4.9.337).
-
-            Variant: `${{ matrix.variant.kernel_version }}` (run #${{ github.run_number }})
-
-            | | |
-            |---|---|
-            | Device | Realme XT (RMX1921) |
-            | SoC | Qualcomm Snapdragon 710 (SDM710) |
-            | Kernel | 4.9.337-Rebel |
-            | Defconfig | `sdm670-perf_defconfig` |
-            | Toolchain | proton-clang (kdrag0n) |
-            | Root | KernelSU-Next (legacy) |
-
-            ### Install
-            Flash `*.zip` from the assets via AnyKernel3 from a custom recovery.
-
-            ### Requirements and warnings
-            - **Back up your data and stock `boot.img` first.** A kernel flash
-              can brick a device, and a bad flash can make userdata
-              undecryptable.
-            - Built and tested on a **4 GB / 128 GB** unit.
-
-            ### Known issues
-            - KernelSU-Next v3.4.0 targets 4.17+ for its syscall-table hook and
-              notes its kprobe hook is for 5.10+. This is a 4.9 kernel, so
-              **root may not work** on this build. If the manager reports
-              unsupported or is not integrated, that is the reason.
-            - A VPN app that fails to tear down cleanly can leave a stale
-              interface behind. The kernel sweeps unused TUN interfaces, but a
-              wedged app may still need a reboot.
-            - OTA updates are untested and may not work.
-
-            ### Credits
-            - dain09 — `android_kernel_realme_sdm710`, AnyKernel3
-            - Sultan Alsawaf — Simple LMK
-            - KernelSU-Next — KernelSU
-            - kdrag0n — proton-clang
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: Mystralis/Rebel ${{ steps.tag.outputs.tag }}
+          body: ""
+          fail_on_unmatched_files: false
           files: |
             release/*.zip
-            release/kernel.config
