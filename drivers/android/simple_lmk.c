@@ -64,8 +64,24 @@ MODULE_PARM_DESC(boot_grace_ms,
  * sustained window of them before killing, so transient pressure is left to
  * plain reclaim. Any continuing pressure still triggers: the count is reset
  * only by a notification reporting pressure below 100.
+ *
+ * The streak is the primary trigger, so it is the knob that decides how
+ * twitchy killing is. The streak only needs to beat pressure_window_ms to
+ * fire, which a threshold of 3 let it do on every transient reclaim spike.
+ * On a 4 GB device that cost a lot: the victim walk starts at the highest
+ * adj and descends until MIN_FREE_PAGES is satisfied, so a spike early enough
+ * in the walk lands on visible and foreground tasks. Measured on RMX1971
+ * (3.4 GB, 24 min trace, 155 kills) the threshold of 3 produced 16 kills at
+ * adj<=103 and one at adj 0, taking out launcher3 14x, the VPN tunnel 4x and
+ * the foreground app once.
+ *
+ * Raising the streak to 8 keeps the 2000 ms window as the backstop, so
+ * genuinely sustained exhaustion still kills within two seconds. What it
+ * filters out is only the reclaim spike, which is what reclaim exists to
+ * handle in the first place. Same trace with 8: no adj<=103 kills, no adj 0
+ * kills, and launcher3 and the VPN tunnel stopped cycling.
  */
-static unsigned int pressure_min_streak __read_mostly = 3;
+static unsigned int pressure_min_streak __read_mostly = 8;
 module_param(pressure_min_streak, uint, 0644);
 MODULE_PARM_DESC(pressure_min_streak,
 		 "Number of pressure==100 notifications required before killing. "
