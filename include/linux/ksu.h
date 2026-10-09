@@ -25,6 +25,15 @@
 
 struct filename;
 
+/*
+ * The KSU install magic pair, from uapi/supercall.h in the driver. A call to
+ * reboot() with magic1/magic2 set to these values is how the manager asks the
+ * driver for the anon inode fd that every supercall travels over. Must stay in
+ * sync with the driver's uapi.
+ */
+#define KSU_INSTALL_MAGIC1 0xDEADBEEF
+#define KSU_INSTALL_MAGIC2 0xCAFEBABE
+
 #ifdef __KERNEL__
 /* feature/sucompat.h */
 extern int ksu_handle_faccessat(int *dfd, const char __user **filename_user,

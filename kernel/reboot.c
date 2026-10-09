@@ -289,12 +289,28 @@ SYSCALL_DEFINE4(reboot, int, magic1, int, magic2, unsigned int, cmd,
 
 #ifdef CONFIG_KSU_MANUAL_HOOK
 	/*
-	 * The manager issues reboot() with a KSU_INSTALL magic pair to have the
+	 * The manager issues reboot() with a KSU install magic pair to have the
 	 * driver hand it an anon inode fd, which is the transport for every
-	 * supercall. Always returns 0, so the reboot below still runs normally
-	 * for anything that is not a KSU request.
+	 * supercall.
+	 *
+	 * ksu_handle_sys_reboot() consumes that pair and installs the fd from
+	 * task_work, but it returns 0 on every path -- even the ones it handles
+	 * -- so its return value says nothing about whether the request was
+	 * consumed. Test the magic pair here instead and return success.
+	 *
+	 * Without this the call falls through to the CAP_SYS_BOOT check below and
+	 * returns -EPERM to every unprivileged caller, which is every app
+	 * including the manager. The fd does get installed, but ksud sees the
+	 * failure and reports "could not retrieve kernelsu driver fd", so the
+	 * manager stays at "Unsupported | Not integrated".
+	 *
+	 * Anything that is not the KSU magic pair falls through and reboots
+	 * normally, exactly as before.
 	 */
-	ksu_handle_sys_reboot(magic1, magic2, cmd, &arg);
+	if (magic1 == KSU_INSTALL_MAGIC1 && magic2 == KSU_INSTALL_MAGIC2) {
+		ksu_handle_sys_reboot(magic1, magic2, cmd, &arg);
+		return 0;
+	}
 #endif
 
 	/* We only trust the superuser with rebooting the system. */
