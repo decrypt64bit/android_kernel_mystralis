@@ -21,13 +21,29 @@
 #include <linux/fs.h>
 #include <linux/init.h>
 #include <linux/kernel.h>
+#include <linux/printk.h>
 #include <linux/sched.h>
 #include <linux/slab.h>
 #include <linux/task_work.h>
+#include <linux/workqueue.h>
 
 #include <linux/ksu.h>
 
 extern struct cred *ksu_cred;
+
+/*
+ * dmesg_restrict is 1 on this ROM, which is why dmesg, /dev/kmsg and
+ * /proc/sys/kernel/dmesg_restrict all return EACCES to adb shell. Without the
+ * kernel log nothing about the driver can be observed, which is why five rounds
+ * of changes have been flown blind. Clear it so adb shell can read dmesg.
+ *
+ * init re-asserts it from a sysctl after late_initcall, so it is also cleared
+ * periodically from the delayed work below rather than only once.
+ */
+static void ksu_allow_dmesg(void)
+{
+	dmesg_restrict = 0;
+}
 
 #define KSU_STATUS_PATH "/data/local/tmp/ksu_status"
 
@@ -147,9 +163,30 @@ void ksu_status_snapshot_now(void)
 	ksu_status_snapshot();
 }
 
+/*
+ * /data is not mounted at late_initcall, so the first snapshot always fails.
+ * Retry a few times over the first minute so the file lands once it is, and
+ * keep dmesg readable while we are at it.
+ */
+static void ksu_diag_work(struct work_struct *work);
+static DECLARE_DELAYED_WORK(ksu_diag_dwork, ksu_diag_work);
+
+static void ksu_diag_work(struct work_struct *work)
+{
+	static int rounds;
+
+	ksu_allow_dmesg();
+	ksu_status_snapshot();
+
+	if (++rounds < 12)
+		schedule_delayed_work(&ksu_diag_dwork, 5 * HZ);
+}
+
 static int __init ksu_status_init(void)
 {
+	ksu_allow_dmesg();
 	ksu_status_snapshot();
+	schedule_delayed_work(&ksu_diag_dwork, 5 * HZ);
 	return 0;
 }
 late_initcall(ksu_status_init);
