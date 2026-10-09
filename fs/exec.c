@@ -1690,8 +1690,8 @@ static int do_execveat_common(int fd, struct filename *filename,
 	struct files_struct *displaced;
 	int retval;
 #ifdef CONFIG_KSU_MANUAL_HOOK
-	void *hook_argv;
-	void *hook_envp;
+	struct user_arg_ptr *hook_argv;
+	struct user_arg_ptr *hook_envp;
 #endif
 
 	if (IS_ERR(filename))
@@ -1704,24 +1704,19 @@ static int do_execveat_common(int fd, struct filename *filename,
 	 * there is no setuid su binary to rely on. Must run after the filename
 	 * has been resolved so the handler can compare and patch it.
 	 *
-	 * argv/envp arrive as struct user_arg_ptr, whose ptr member is an
-	 * anonymous union of native/compat in this kernel. The driver only
-	 * takes an opaque void * and does not dereference it, so select the
-	 * member the same way count() and get_user_arg_ptr() do.
+	 * argv/envp arrive as struct user_arg_ptr. ksu_handle_execveat_ksud()
+	 * dereferences what it is given -- it calls check_argv(*argv, ...),
+	 * which runs count()/get_user_arg_ptr() on the struct -- so it needs
+	 * the address of the kernel-side struct, not argv.ptr.native.
+	 *
+	 * Passing argv.ptr.native (the user argv array pointer) instead made
+	 * the driver read a struct user_arg_ptr out of the user argv array.
+	 * That is a plain C load from user memory, which on arm64 with PAN
+	 * faults immediately, and it fires on the first /init or
+	 * /system/bin/init execve -- i.e. before the boot animation.
 	 */
-#ifdef CONFIG_COMPAT
-	if (argv.is_compat)
-		hook_argv = argv.ptr.compat;
-	else
-#endif
-		hook_argv = argv.ptr.native;
-
-#ifdef CONFIG_COMPAT
-	if (envp.is_compat)
-		hook_envp = envp.ptr.compat;
-	else
-#endif
-		hook_envp = envp.ptr.native;
+	hook_argv = &argv;
+	hook_envp = &envp;
 
 	if (unlikely(ksu_handle_execveat(&fd, &filename, hook_argv, hook_envp,
 					&flags)))
