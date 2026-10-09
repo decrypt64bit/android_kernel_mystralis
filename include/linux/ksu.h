@@ -54,6 +54,13 @@ extern int ksu_handle_umount(uid_t old_uid, uid_t new_uid);
 /* supercall/supercall.c: how the manager obtains its anon inode fd */
 extern int ksu_handle_sys_reboot(int magic1, int magic2, unsigned int cmd,
 				 void __user **arg);
+
+/*
+ * runtime/boot_event.c: sets ksu_boot_completed and calls track_throne(),
+ * which is what crowns the manager (ksu_set_manager_appid). Normally this
+ * only runs from the REPORT_EVENT supercall, which is root-only.
+ */
+void on_boot_completed(void);
 #endif /* __KERNEL__ */
 
 #endif /* CONFIG_KSU_MANUAL_HOOK */
