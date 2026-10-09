@@ -35,11 +35,21 @@ env:
   KERNEL_VARIANT: "rebel"
   PROTON_CLANG_REPO: "https://github.com/kdrag0n/proton-clang.git"
   ANYKERNEL_REPO: "https://github.com/dain09/AnyKernel3.git"
-  # KernelSU-Next (legacy branch). Pinned to the legacy branch HEAD so we
-  # always get the latest driver. KSU_MANUAL_HOOK is set in the defconfig;
-  # the kprobes and syscall-table hooks are both incompatible with 4.9.
-  KERNELSU_REPO: "https://github.com/KernelSU-Next/KernelSU-Next"
-  KERNELSU_SETUP_BRANCH: legacy
+  # KernelSU-Next.
+  #
+  # Pinned to the v3.4.0-legacy TAG, NOT the legacy branch. The
+  # branch tip moved past v3.4.0 and now pulls in <linux/
+  # compiler_types.h> (a 5.9 header) in kernel/runtime/ksud.h, and
+  # kernel/include/ksu.h inverts startswith()/endswith() semantics.
+  # The tag is also the exact release the
+  # KernelSU_Next_v3.4.0_33294 manager was built from, so the driver
+  # version matches the installed manager instead of drifting.
+  #
+  # setup.sh does a full clone, so KSU_VERSION is derived correctly.
+  # KSU_MANUAL_HOOK is set in the defconfig; the kprobes and
+  # syscall-table hooks are both incompatible with 4.9.
+  KERNELSU_SETUP: "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh"
+  KERNELSU_SETUP_BRANCH: v3.4.0-legacy
   KBUILD_BUILD_USER: "@decrypt64bit"
   KBUILD_BUILD_HOST: "ubuntu-24.04"
 
@@ -98,16 +108,14 @@ jobs:
 
       - name: Integrate KernelSU-Next (legacy)
         run: |
-          set -eu
-          git clone --depth 1 -b "$KERNELSU_SETUP_BRANCH" "$KERNELSU_REPO" KernelSU-Next
-          git -C KernelSU-Next rev-parse HEAD
-          DRIVER_DIR=drivers
-          test -d "$DRIVER_DIR" || { echo "no $DRIVER_DIR"; exit 1; }
-          ln -sf "$(realpath --relative-to="$DRIVER_DIR" "$GITHUB_WORKSPACE/KernelSU-Next/kernel")" "$DRIVER_DIR/kernelsu"
-          grep -q "kernelsu" "$DRIVER_DIR/Makefile" || printf "\nobj-\$(CONFIG_KSU) += kernelsu/\n" >> "$DRIVER_DIR/Makefile"
-          grep -q 'source "drivers/kernelsu/Kconfig"' "$DRIVER_DIR/Kconfig" || sed -i '/endmenu/i source "drivers/kernelsu/Kconfig"' "$DRIVER_DIR/Kconfig"
-          echo "--- Makefile tail ---"; tail -3 "$DRIVER_DIR/Makefile"
-          echo "--- Kconfig around endmenu ---"; grep -n -B1 -A1 'kernelsu' "$DRIVER_DIR/Kconfig"
+          curl -LSs "$KERNELSU_SETUP" | bash -s $KERNELSU_SETUP_BRANCH
+          # setup.sh silently falls back to the default branch when its
+          # checkout fails ("Checkout default branch"), so enforce the pin
+          # explicitly. The step fails loudly if this doesn't work.
+          cd KernelSU-Next
+          git fetch origin "$KERNELSU_SETUP_BRANCH" || git fetch origin
+          git checkout "$KERNELSU_SETUP_BRANCH"
+          git rev-parse HEAD
 
           # Backport headers for 4.9.
           #
@@ -123,7 +131,10 @@ jobs:
           # linux/sched/task.h is left alone: this kernel already has it.
           # linux/version.h needs no change: the kernel Makefile generates it
           # from VERSION/PATCHLEVEL, so LINUX_VERSION_CODE is available.
-          find KernelSU-Next/kernel -name '*.[ch]' -exec sed -i \
+          #
+          # We are inside KernelSU-Next/ (see the `cd` above), so `kernel`
+          # is the driver source tree.
+          find kernel -name '*.[ch]' -exec sed -i \
             -e 's|<linux/compiler_types\.h>|<linux/compiler.h>|g' \
             -e 's|<linux/sched/signal\.h>|<linux/sched.h>|g' \
             -e 's|<linux/sched/task_stack\.h>|<linux/sched.h>|g' \
@@ -135,12 +146,10 @@ jobs:
 
           # Fail loudly if any include that does not exist on 4.9 survived.
           if grep -rEn 'linux/(compiler_types|hex|pgtable)\.h|linux/sched/(signal|task_stack|types|user)\.h|uapi/linux/sched/types\.h' \
-               KernelSU-Next/kernel --include='*.c' --include='*.h'; then
+               kernel --include='*.c' --include='*.h'; then
             echo "::error::headers missing on 4.9 remain in the KSUN tree"
             exit 1
           fi
-          echo "KSUN 4.9 header backport: clean"
-
       - name: Configure and Build Kernel
         env:
           KERNEL_VERSION: ${{ matrix.variant.kernel_version }}
