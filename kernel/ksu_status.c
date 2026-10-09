@@ -111,7 +111,11 @@ void ksu_fire_boot_completed(void)
 
 	cb->func = ksu_boot_completed_cb;
 
-	if (task_work_add(&init_task, cb, TWA_RESUME)) {
+	/*
+	 * This tree's task_work_add() takes a plain bool for "notify", not the
+	 * TWA_RESUME/TWA_EXIT enum that arrived in 4.11. true == TWA_RESUME.
+	 */
+	if (task_work_add(&init_task, cb, true)) {
 		pr_warn("ksu: task_work_add on init failed, running inline\n");
 		kfree(cb);
 		on_boot_completed();
