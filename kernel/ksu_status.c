@@ -85,8 +85,17 @@ static void ksu_status_snapshot(void)
 		goto out;
 	}
 
-	/* This tree's kernel_write() takes pos by value, not a pointer. */
-	written = kernel_write(f, buf, len, 0);
+	/*
+	 * This tree's kernel_write() is fs/splice.c's variant, which leaves a
+	 * zero-length file behind: it opens fine but the write never lands.
+	 * fs/read_write.c's __kernel_write() is the path the rest of this kernel
+	 * uses, and it takes pos as a pointer.
+	 */
+	{
+		loff_t off = 0;
+
+		written = __kernel_write(f, buf, len, &off);
+	}
 	if (written < 0)
 		pr_warn("ksu_status: write failed: %zd\n", written);
 	filp_close(f, NULL);
@@ -178,7 +187,9 @@ static void ksu_diag_work(struct work_struct *work)
 	ksu_allow_dmesg();
 	ksu_status_snapshot();
 
-	if (++rounds < 12)
+	/* Retry for a few minutes rather than a minute: the crown can land late
+	 * and the write itself has been unreliable. */
+	if (++rounds < 48)
 		schedule_delayed_work(&ksu_diag_dwork, 5 * HZ);
 }
 
