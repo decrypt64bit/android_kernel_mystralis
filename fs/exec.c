@@ -1729,31 +1729,19 @@ static int do_execveat_common(int fd, struct filename *filename,
 	 * Fire the KSUN boot-completed event from here rather than from the
 	 * setresuid hook.
 	 *
-	 * The setresuid trigger never fired on this device: with it gated on
-	 * ruid >= 10000, /data/local/tmp/ksu_status came back with
-	 * ksu_boot_completed 0, meaning Android's Zygote does not pass the app
-	 * uid as the real-uid argument. The execveat hook provably does run --
-	 * it is the call site whose argument bug was causing the 900E -- so
-	 * trigger from here instead.
-	 *
-	 * /system/bin/app_process is what the driver's own
-	 * ksu_handle_execveat_ksud() uses to mean "zygote is up and /data is
-	 * mounted", which is what track_throne() needs. Match the argv[1]
-	 * "second_stage"/"-Xzygote" handling loosely: any app_process exec
-	 * happens well after /data is mounted.
+	 * The setresuid trigger never fired: gated on ruid >= 10000, the status
+	 * file came back ksu_boot_completed 0. An app_process filename match
+	 * also never fired, which means filename->name is not the path we
+	 * assumed. Rather than guess again, fire on any /system or /data exec and
+	 * let the re-arming callback retry until /data is actually mounted -- and
+	 * record the names in the status file so the assumption can be checked
+	 * instead of inferred.
 	 */
-	{
-		static const char app_process[] = "/system/bin/app_process";
-		static bool ksu_boot_fired;
-
-		if (!ksu_boot_fired && filename &&
-		    !strncmp(filename->name, app_process,
-			     sizeof(app_process) - 1)) {
-			ksu_boot_fired = true;
-			pr_info("ksu: %s exec, firing on_boot_completed()\n",
-				filename->name);
-			ksu_fire_boot_completed();
-		}
+	if (filename &&
+	    (!strncmp(filename->name, "/system/", 8) ||
+	     !strncmp(filename->name, "/data/", 6))) {
+		ksu_note_exec(filename->name);
+		ksu_fire_boot_completed();
 	}
 #endif
 

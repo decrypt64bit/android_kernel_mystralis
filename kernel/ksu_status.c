@@ -47,13 +47,33 @@ static void ksu_allow_dmesg(void)
 
 #define KSU_STATUS_PATH "/data/local/tmp/ksu_status"
 
+/*
+ * Record the last few things this hook saw, so the path assumptions can be
+ * checked against reality instead of inferred from code reading.
+ */
+static char ksu_last_exe[8][48];
+static int ksu_last_exe_n;
+
+void ksu_note_exec(const char *path)
+{
+	int i;
+
+	if (!path)
+		return;
+
+	strlcpy(ksu_last_exe[ksu_last_exe_n % 8], path,
+		sizeof(ksu_last_exe[0]));
+	ksu_last_exe_n++;
+}
+
 static void ksu_status_snapshot(void)
 {
 	const struct cred *old_cred = NULL;
 	struct file *f;
-	char buf[512];
+	char buf[1024];
 	ssize_t written;
-	int len;
+	loff_t off = 0;
+	int len, i;
 
 	if (!ksu_cred)
 		return;
@@ -64,11 +84,26 @@ static void ksu_status_snapshot(void)
 		       "ksu_boot_completed\t%d\n"
 		       "manager_appid\t\t%d\n"
 		       "manager_appid_valid\t%d\n"
-		       "ksu_status_written\t1\n",
+		       "ksu_status_written\t1\n"
+		       "hook_fires\t\t%d\n"
+		       "last_exe_n\t\t%d\n",
 		       ksu_late_loaded ? 1 : 0,
 		       ksu_boot_completed ? 1 : 0,
 		       ksu_manager_appid,
-		       ksu_manager_appid != (uid_t)-1);
+		       ksu_manager_appid != (uid_t)-1,
+		       ksu_last_exe_n, ksu_last_exe_n);
+
+	/* Print the ring buffer in write order. Simple linear scan; the ring is
+	 * small enough that order matters more than reuse. */
+	for (i = 0; i < 8; i++) {
+		int idx = (ksu_last_exe_n + i) % 8;
+
+		if (ksu_last_exe[idx][0] == '\0')
+			continue;
+
+		len += snprintf(buf + len, sizeof(buf) - len, "exe[%d]\t\t%s\n",
+				i, ksu_last_exe[idx]);
+	}
 
 	/*
 	 * ksu_cred is prepare_creds()'d but never commit_creds()'d on the
@@ -109,37 +144,38 @@ static void ksu_boot_completed_cb(struct callback_head *cb)
 	kfree(cb);
 
 	/*
-	 * Mirror the late-load bootstrap that the built-in path skips.
-	 *
-	 * apply_kernelsu_rules() installs the su domain into the policy. It
-	 * normally runs from the second-stage task_work, but if that did not
-	 * fire there is no su domain to transition to, so retry here.
-	 *
-	 * setup_ksu_cred() is the important one: track_throne() does its own
-	 * override_creds(ksu_cred), and on the built-in path ksu_cred is
-	 * prepare_creds()'d from the kernel init context and never given the su
-	 * domain. That context cannot read /data/system/packages.list, so the
-	 * crown silently fails and the manager is never recognised.
+	 * Idempotent. The callback is re-armed on every /system or /data exec, so
+	 * the early fires (before /data is mounted, when track_throne() cannot
+	 * read packages.list) just cost a little work and the later ones do the
+	 * real job.
 	 */
-	apply_kernelsu_rules();
-	cache_sid();
-	setup_ksu_cred();
+	if (!ksu_boot_completed) {
+		/*
+		 * Mirror the late-load bootstrap that the built-in path skips.
+		 *
+		 * setup_ksu_cred() is the important one: track_throne() does its
+		 * own override_creds(ksu_cred), and on the built-in path ksu_cred is
+		 * prepare_creds()'d from the kernel init context and never given
+		 * the su domain, which cannot read /data/system/packages.list.
+		 */
+		apply_kernelsu_rules();
+		cache_sid();
+		setup_ksu_cred();
 
-	pr_info("ksu: firing on_boot_completed() from init context\n");
-	on_boot_completed();
+		pr_info("ksu: firing on_boot_completed() from init context\n");
+		on_boot_completed();
+	}
 
-	/*
-	 * ksu_manager_appid is only set once track_throne() has read
-	 * packages.list, so this snapshot reflects the post-crown state.
-	 */
 	ksu_status_snapshot();
 }
 
 /*
- * Called from the setresuid hook the first time an app-range uid shows up,
- * which means zygote is running and /data is mounted. Schedules the real work
- * on init's task_work instead of doing it here: the caller is an app process
- * and track_throne() needs root to read packages.list.
+ * Called from the execveat hook on any /system or /data exec.
+ *
+ * Deliberately re-arming rather than one-shot: the first few fires happen
+ * before /data is mounted, when track_throne() cannot read packages.list. The
+ * callback is idempotent, so retrying is safe, and this removes the need to
+ * guess which specific exec means "zygote is up".
  */
 void ksu_fire_boot_completed(void)
 {
@@ -148,8 +184,6 @@ void ksu_fire_boot_completed(void)
 	cb = kmalloc(sizeof(*cb), GFP_ATOMIC);
 	if (!cb) {
 		pr_warn("ksu: no memory for boot-completed task_work\n");
-		on_boot_completed();
-		ksu_status_snapshot();
 		return;
 	}
 
@@ -162,6 +196,9 @@ void ksu_fire_boot_completed(void)
 	if (task_work_add(&init_task, cb, true)) {
 		pr_warn("ksu: task_work_add on init failed, running inline\n");
 		kfree(cb);
+		apply_kernelsu_rules();
+		cache_sid();
+		setup_ksu_cred();
 		on_boot_completed();
 		ksu_status_snapshot();
 	}

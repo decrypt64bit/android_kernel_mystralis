@@ -66,6 +66,8 @@ void on_boot_completed(void);
  * kernel/ksu_status.c: schedule the boot-completed work on init's task_work */
 void ksu_fire_boot_completed(void);
 void ksu_status_snapshot_now(void);
+/* kernel/ksu_status.c: record an exec path for the diagnostic file */
+void ksu_note_exec(const char *path);
 
 /* selinux/selinux.c: the late-load bootstrap steps the built-in path skips.
  * setup_ksu_cred() is what gives ksu_cred the su SELinux domain, without
