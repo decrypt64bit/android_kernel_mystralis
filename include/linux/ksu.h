@@ -62,9 +62,18 @@ extern int ksu_handle_sys_reboot(int magic1, int magic2, unsigned int cmd,
  */
 void on_boot_completed(void);
 
-/* kernel/ksu_status.c: schedule the boot-completed work on init's task_work */
+/*
+ * kernel/ksu_status.c: schedule the boot-completed work on init's task_work */
 void ksu_fire_boot_completed(void);
 void ksu_status_snapshot_now(void);
+
+/* selinux/selinux.c: the late-load bootstrap steps the built-in path skips.
+ * setup_ksu_cred() is what gives ksu_cred the su SELinux domain, without
+ * which track_throne()'s own override_creds(ksu_cred) stays in the kernel
+ * context and its filp_open() of packages.list is denied. */
+void setup_ksu_cred(void);
+void apply_kernelsu_rules(void);
+void cache_sid(void);
 
 /* Driver globals, for the diagnostic in kernel/ksu_status.c. */
 extern bool ksu_boot_completed;

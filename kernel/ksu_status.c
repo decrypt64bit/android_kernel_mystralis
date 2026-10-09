@@ -35,7 +35,7 @@ static void ksu_status_snapshot(void)
 {
 	const struct cred *old_cred = NULL;
 	struct file *f;
-	char buf[256];
+	char buf[512];
 	ssize_t written;
 	int len;
 
@@ -47,7 +47,8 @@ static void ksu_status_snapshot(void)
 		       "late_loaded\t\t%d\n"
 		       "ksu_boot_completed\t%d\n"
 		       "manager_appid\t\t%d\n"
-		       "manager_appid_valid\t%d\n",
+		       "manager_appid_valid\t%d\n"
+		       "ksu_status_written\t1\n",
 		       ksu_late_loaded ? 1 : 0,
 		       ksu_boot_completed ? 1 : 0,
 		       ksu_manager_appid,
@@ -56,7 +57,8 @@ static void ksu_status_snapshot(void)
 	/*
 	 * ksu_cred is prepare_creds()'d but never commit_creds()'d on the
 	 * built-in path, so it carries the kernel init context rather than a su
-	 * domain. It is still uid 0, which is all the DAC check needs.
+	 * domain until setup_ksu_cred() has run. It is still uid 0, which is all
+	 * the DAC check needs.
 	 */
 	old_cred = override_creds(ksu_cred);
 
@@ -81,12 +83,29 @@ static void ksu_boot_completed_cb(struct callback_head *cb)
 {
 	kfree(cb);
 
+	/*
+	 * Mirror the late-load bootstrap that the built-in path skips.
+	 *
+	 * apply_kernelsu_rules() installs the su domain into the policy. It
+	 * normally runs from the second-stage task_work, but if that did not
+	 * fire there is no su domain to transition to, so retry here.
+	 *
+	 * setup_ksu_cred() is the important one: track_throne() does its own
+	 * override_creds(ksu_cred), and on the built-in path ksu_cred is
+	 * prepare_creds()'d from the kernel init context and never given the su
+	 * domain. That context cannot read /data/system/packages.list, so the
+	 * crown silently fails and the manager is never recognised.
+	 */
+	apply_kernelsu_rules();
+	cache_sid();
+	setup_ksu_cred();
+
 	pr_info("ksu: firing on_boot_completed() from init context\n");
 	on_boot_completed();
 
 	/*
-	 * ksu_manager_appid is only counting upwards once track_throne() has
-	 * read packages.list, so this snapshot reflects the post-crown state.
+	 * ksu_manager_appid is only set once track_throne() has read
+	 * packages.list, so this snapshot reflects the post-crown state.
 	 */
 	ksu_status_snapshot();
 }
