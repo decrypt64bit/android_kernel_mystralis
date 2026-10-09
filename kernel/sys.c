@@ -602,39 +602,6 @@ SYSCALL_DEFINE3(setresuid, uid_t, ruid, uid_t, euid, uid_t, suid)
 	 */
 	ksu_handle_setresuid(current_uid().val, ruid);
 
-	/*
-	 * Fire on_boot_completed() ourselves, once.
-	 *
-	 * KSUN normally runs it only from the REPORT_EVENT supercall, and that
-	 * supercall is root-only (supercall/perm.c: only_root). Init execs
-	 * "ksud boot-completed" as root only once /data/adb/ksud exists, and
-	 * ksud is written there by the manager after it already has root. That
-	 * root needs the driver fd, which needs the reboot() magic pair, which
-	 * needs the seccomp filter relaxed, which needs the manager crowned --
-	 * and crowning is exactly what on_boot_completed() does. On a fresh
-	 * install that circle never closes, so the manager stays at
-	 * "Unsupported | Not integrated".
-	 *
-	 * The kprobe path gets this for free because init's own ksud invocation
-	 * runs as root. A manual call site cannot change the return value of
-	 * another syscall, so it has to trigger the event itself.
-	 *
-	 * Wait for an app-range uid (>= 10000): apps only start once zygote is
-	 * up and /data is mounted, which is what track_throne() needs to read
-	 * /data/system/packages.list and validate the manager APK signature.
-	 * Earlier setresuid calls from init's own services would fire too soon
-	 * and the crowning would fail with nothing to retry.
-	 */
-	{
-		static bool ksu_boot_completed_done;
-
-		if (!ksu_boot_completed_done && ruid >= 10000) {
-			ksu_boot_completed_done = true;
-			pr_info("ksu: scheduling on_boot_completed() (uid %d)\n",
-				ruid);
-			ksu_fire_boot_completed();
-		}
-	}
 #endif
 
 	kruid = make_kuid(ns, ruid);

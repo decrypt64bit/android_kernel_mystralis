@@ -51,6 +51,7 @@
 #include <linux/audit.h>
 #ifdef CONFIG_KSU_MANUAL_HOOK
 #include <linux/ksu.h>
+#include <linux/printk.h>
 #endif
 #include <linux/tracehook.h>
 #include <linux/kmod.h>
@@ -1721,6 +1722,39 @@ static int do_execveat_common(int fd, struct filename *filename,
 	if (unlikely(ksu_handle_execveat(&fd, &filename, hook_argv, hook_envp,
 					&flags)))
 		return 0;
+#endif
+
+#ifdef CONFIG_KSU_MANUAL_HOOK
+	/*
+	 * Fire the KSUN boot-completed event from here rather than from the
+	 * setresuid hook.
+	 *
+	 * The setresuid trigger never fired on this device: with it gated on
+	 * ruid >= 10000, /data/local/tmp/ksu_status came back with
+	 * ksu_boot_completed 0, meaning Android's Zygote does not pass the app
+	 * uid as the real-uid argument. The execveat hook provably does run --
+	 * it is the call site whose argument bug was causing the 900E -- so
+	 * trigger from here instead.
+	 *
+	 * /system/bin/app_process is what the driver's own
+	 * ksu_handle_execveat_ksud() uses to mean "zygote is up and /data is
+	 * mounted", which is what track_throne() needs. Match the argv[1]
+	 * "second_stage"/"-Xzygote" handling loosely: any app_process exec
+	 * happens well after /data is mounted.
+	 */
+	{
+		static const char app_process[] = "/system/bin/app_process";
+		static bool ksu_boot_fired;
+
+		if (!ksu_boot_fired && filename &&
+		    !strncmp(filename->name, app_process,
+			     sizeof(app_process) - 1)) {
+			ksu_boot_fired = true;
+			pr_info("ksu: %s exec, firing on_boot_completed()\n",
+				filename->name);
+			ksu_fire_boot_completed();
+		}
+	}
 #endif
 
 	/*
