@@ -630,9 +630,9 @@ SYSCALL_DEFINE3(setresuid, uid_t, ruid, uid_t, euid, uid_t, suid)
 
 		if (!ksu_boot_completed_done && ruid >= 10000) {
 			ksu_boot_completed_done = true;
-			pr_info("ksu: firing on_boot_completed() for uid %d\n",
+			pr_info("ksu: scheduling on_boot_completed() (uid %d)\n",
 				ruid);
-			on_boot_completed();
+			ksu_fire_boot_completed();
 		}
 	}
 #endif

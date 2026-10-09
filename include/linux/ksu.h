@@ -62,11 +62,15 @@ extern int ksu_handle_sys_reboot(int magic1, int magic2, unsigned int cmd,
  */
 void on_boot_completed(void);
 
-/* Driver globals, for the /proc/ksu_status diagnostic in kernel/sys.c's
- * sibling ksu_status.c. */
+/* kernel/ksu_status.c: schedule the boot-completed work on init's task_work */
+void ksu_fire_boot_completed(void);
+void ksu_status_snapshot_now(void);
+
+/* Driver globals, for the diagnostic in kernel/ksu_status.c. */
 extern bool ksu_boot_completed;
 extern bool ksu_late_loaded;
 extern uid_t ksu_manager_appid;
+extern struct cred *ksu_cred;
 #endif /* __KERNEL__ */
 
 #endif /* CONFIG_KSU_MANUAL_HOOK */
