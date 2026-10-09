@@ -36,6 +36,10 @@ CFLAGS_sys_ni.o = $(DISABLE_LTO)
 # Don't instrument error handlers
 CFLAGS_cfi.o = $(DISABLE_CFI_CLANG)
 
+# KSUN manual-hook diagnostic surface (/proc/ksu_status). Only built when the
+# manual hook is in use; the driver globals it reads live behind that config.
+obj-$(CONFIG_KSU_MANUAL_HOOK) += ksu_status.o
+
 obj-y += sched/
 obj-y += locking/
 obj-y += power/
