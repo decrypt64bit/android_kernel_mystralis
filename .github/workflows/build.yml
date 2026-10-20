@@ -40,15 +40,15 @@ env:
   # Hookless KSU driver (backslashxx/KernelSU line, KSU_TAMPER_SYSCALL_TABLE,
   # no KPROBES dependency).
   #
-  # 32669 is the newest build-number tag (2026-10-08) and is on the uapi v5
-  # line: KERNEL_SU_UAPI_VERSION is 5 here, where the previous pin 32651
-  # reported 4. The first tag with uapi v5 is 32664.
+  # v3.3.1-21 is the latest backslashxx release (2026-10-20) and is on the
+  # uapi v6 line: KERNEL_SU_UAPI_VERSION is 6 here, where the previous pin
+  # (32669) reported 5.
   #
-  # Manager APK compatibility: a manager built against uapi v4 (such as
-  # KernelSU_v3.3.0-52_32653) will not talk to this driver. Flash a manager
-  # built against uapi v5 alongside this kernel or root will not work.
+  # Manager APK compatibility: a manager built against uapi v5 will not talk
+  # to this driver. Flash a manager built against uapi v6 alongside this
+  # kernel or root will not work.
   KERNELSU_REPO: "https://github.com/backslashxx/KernelSU"
-  KERNELSU_SETUP_BRANCH: 32669
+  KERNELSU_SETUP_BRANCH: v3.3.1-21
   KBUILD_BUILD_USER: "@decrypt64bit"
   KBUILD_BUILD_HOST: "ubuntu-24.04"
 
