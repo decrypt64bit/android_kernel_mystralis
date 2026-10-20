@@ -338,7 +338,7 @@ static int max_sched_tunable_scaling = SCHED_TUNABLESCALING_END-1;
 int sysctl_slide_boost_enabled = 0;
 int sysctl_boost_task_threshold = 51;
 #ifdef CONFIG_CAMERA_OPT
-int sysctl_camera_opt_enabled = 0;
+int sysctl_camera_opt_enabled = 1;
 #endif
 int sysctl_frame_rate = 60;
 int sched_frame_rate_handler(struct ctl_table *table, int write, void __user *buffer, size_t *lenp, loff_t *ppos)
