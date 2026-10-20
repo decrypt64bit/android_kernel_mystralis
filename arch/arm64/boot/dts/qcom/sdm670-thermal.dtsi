@@ -630,7 +630,7 @@
 
 		trips {
 			gold_trip0: gold-trip0 {
-				temperature = <47000>;
+				temperature = <55000>;
 				hysteresis = <0>;
 				type = "passive";
 			};
