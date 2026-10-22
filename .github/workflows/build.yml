@@ -36,7 +36,7 @@ env:
   RELEASE_NAME: "Mystralis-XT-mglru"
   KERNEL_VARIANT: "rxt-mglru"
   PROTON_CLANG_REPO: "https://github.com/kdrag0n/proton-clang.git"
-  ANYKERNEL_REPO: "https://github.com/dain09/AnyKernel3.git"
+  ANYKERNEL_REPO: "https://github.com/decrypt64bit/AnyKernel3.git"
   # Hookless KSU driver (backslashxx/KernelSU line, KSU_TAMPER_SYSCALL_TABLE,
   # no KPROBES dependency). Same repo mystralis and mystralis-mglru use, and
   # deliberately NOT dain09/KernelSU: that ref no longer exists upstream, so
