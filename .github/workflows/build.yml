@@ -1,4 +1,4 @@
-﻿name: Build Mystralis Kernel
+﻿name: Build Mystralis SUSFS Kernels
 
 on:
   push:
@@ -26,31 +26,12 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  DEVICE_CODENAME: "RMX1971"
   KERNEL_DEFCONFIG: "sdm670-perf_defconfig"
   KERNEL_IMAGE: "Image.gz-dtb"
-  # In-kernel identity. This is what uname and the OS settings show, so it
-  # carries no device suffix.
-  KERNEL_NAME: "Mystralis-SUSFS"
-  # GitHub-facing identity. The branch, the zip and the release tag carry the
-  # device so the two devices never publish identical names.
-  RELEASE_NAME: "Mystralis-SUSFS-5Pro"
-  KERNEL_VARIANT: "susfs"
   PROTON_CLANG_REPO: "https://github.com/kdrag0n/proton-clang.git"
   ANYKERNEL_REPO: "https://github.com/decrypt64bit/AnyKernel3.git"
   # Hookless KSU driver (backslashxx/KernelSU line, KSU_TAMPER_SYSCALL_TABLE,
-  # no KPROBES dependency). This is the same repo mystralis-mglru uses, and
-  # deliberately NOT dain09/KernelSU: that ref no longer exists upstream, so
-  # the old `curl setup.sh | bash` path hard-failed before the compiler and
-  # every build on every branch died.
-  #
-  # v3.3.1-21 is the latest backslashxx release (2026-10-20) and is on the
-  # uapi v6 line: KERNEL_SU_UAPI_VERSION is 6 here, where the previous pin
-  # (32669) reported 5.
-  #
-  # Manager APK compatibility: a manager built against uapi v5 will not talk
-  # to this driver. Flash a manager built against uapi v6 alongside this
-  # kernel or root will not work.
+  # no KPROBES dependency).
   KERNELSU_REPO: "https://github.com/backslashxx/KernelSU"
   KERNELSU_SETUP_BRANCH: v3.3.1+22
   KBUILD_BUILD_USER: "@decrypt64bit"
@@ -58,25 +39,100 @@ env:
 
 jobs:
   build:
-    name: Build Kernel Artifacts (${{ matrix.variant.kernel_version }})
+    name: Build (${{ matrix.variant.device }} / ${{ matrix.variant.kernel_version }} / ${{ matrix.variant.flavor }})
     runs-on: ubuntu-24.04
     permissions:
       contents: read
     strategy:
-      # Without this, one variant failing cancels the other, and since the
+      # Without this, one variant failing cancels the others, and since the
       # release job needs the whole matrix it would never publish.
       fail-fast: false
       matrix:
         variant:
-          - kernel_version: "ascension-SLMK"
-          - kernel_version: "ascension"
+          # --- R5P (RMX1971) ---
+          - device: "5pro"
+            codename: "RMX1971"
+            anykernel: "r5p"
+            kname: "Mystralis-SUSFS"
+            release: "Mystralis-SUSFS-5Pro"
+            checkout_ref: ""
+            mglru: false
+            flavor: "susfs"
+            kernel_version: "ascension-SLMK"
+          - device: "5pro"
+            codename: "RMX1971"
+            anykernel: "r5p"
+            kname: "Mystralis-SUSFS"
+            release: "Mystralis-SUSFS-5Pro"
+            checkout_ref: ""
+            mglru: false
+            flavor: "susfs"
+            kernel_version: "ascension"
+          - device: "5pro"
+            codename: "RMX1971"
+            anykernel: "r5p"
+            kname: "Mystralis-SUSFS-mglru"
+            release: "Mystralis-SUSFS-5Pro"
+            checkout_ref: ""
+            mglru: true
+            flavor: "susfs-mglru"
+            kernel_version: "ascension-SLMK"
+          - device: "5pro"
+            codename: "RMX1971"
+            anykernel: "r5p"
+            kname: "Mystralis-SUSFS-mglru"
+            release: "Mystralis-SUSFS-5Pro"
+            checkout_ref: ""
+            mglru: true
+            flavor: "susfs-mglru"
+            kernel_version: "ascension"
+          # --- XT (RMX1921), built from the mystralis-rxt-susfs tree ---
+          - device: "xt"
+            codename: "RMX1921"
+            anykernel: "rxt"
+            kname: "Mystralis-SUSFS-XT"
+            release: "Mystralis-SUSFS-XT"
+            checkout_ref: "mystralis-rxt-susfs"
+            mglru: false
+            flavor: "susfs"
+            kernel_version: "ascension-SLMK"
+          - device: "xt"
+            codename: "RMX1921"
+            anykernel: "rxt"
+            kname: "Mystralis-SUSFS-XT"
+            release: "Mystralis-SUSFS-XT"
+            checkout_ref: "mystralis-rxt-susfs"
+            mglru: false
+            flavor: "susfs"
+            kernel_version: "ascension"
+          - device: "xt"
+            codename: "RMX1921"
+            anykernel: "rxt"
+            kname: "Mystralis-SUSFS-XT-mglru"
+            release: "Mystralis-SUSFS-XT"
+            checkout_ref: "mystralis-rxt-susfs"
+            mglru: true
+            flavor: "susfs-mglru"
+            kernel_version: "ascension-SLMK"
+          - device: "xt"
+            codename: "RMX1921"
+            anykernel: "rxt"
+            kname: "Mystralis-SUSFS-XT-mglru"
+            release: "Mystralis-SUSFS-XT"
+            checkout_ref: "mystralis-rxt-susfs"
+            mglru: true
+            flavor: "susfs-mglru"
+            kernel_version: "ascension"
 
     steps:
       - name: Checkout kernel source
         uses: actions/checkout@v6
         with:
           # Shallow checkout is enough (no rebase); speeds up CI a lot.
+          # XT jobs build the mystralis-rxt-susfs tree, which carries the
+          # same SUSFS integration on the rxt/MGLRU source base.
           fetch-depth: 1
+          ref: ${{ matrix.variant.checkout_ref != '' && matrix.variant.checkout_ref || github.ref }}
 
       - name: Switch non-SLMK variant to classic LMK
         if: ${{ matrix.variant.kernel_version == 'ascension' }}
@@ -91,7 +147,8 @@ jobs:
       - name: Restore ccache
         uses: hendrikmuhs/ccache-action@v1.2.23
         with:
-          key: ${{ runner.os }}-sdm670-kernel
+          # The 5pro and xt trees diverge, so they need separate caches.
+          key: ${{ runner.os }}-sdm670-kernel-${{ matrix.variant.device }}-susfs
           max-size: 10G
 
       - name: Install Host Dependencies
@@ -107,7 +164,7 @@ jobs:
 
       - name: Set up AnyKernel3
         run: |
-          git clone --depth 1 -b r5p $ANYKERNEL_REPO .deps/AnyKernel3
+          git clone --depth 1 -b ${{ matrix.variant.anykernel }} $ANYKERNEL_REPO .deps/AnyKernel3
 
       - name: Integrate KernelSU (hookless)
         run: |
@@ -146,8 +203,14 @@ jobs:
             CROSS_COMPILE="$TC_PATH/aarch64-linux-gnu-" \
             $KERNEL_DEFCONFIG
 
+          # MGLRU ships in both trees (mm/ backport); the plain susfs flavor
+          # turns it off at config level, the susfs-mglru flavor keeps it on.
+          if [ "${{ matrix.variant.mglru }}" = "false" ]; then
+            ./scripts/config --file out/.config --disable LRU_GEN
+          fi
+
           ./scripts/config --file out/.config \
-             --set-str CONFIG_LOCALVERSION "-${KERNEL_NAME}-${KERNEL_VERSION}"
+             --set-str CONFIG_LOCALVERSION "-${{ matrix.variant.kname }}-${KERNEL_VERSION}"
 
           # SUSFS v1.5.5 (fs/Kconfig menu "KernelSU - SUSFS"). sus_su stays
           # off: it needs KernelSU hooks the backslashxx rewrite lacks.
@@ -186,7 +249,7 @@ jobs:
             CROSS_COMPILE_ARM32="$TC_PATH/arm-linux-gnueabi-" \
             LLVM=1 LLVM_IAS=1
 
-      - name: Verify SUSFS is built in
+      - name: Verify SUSFS and MGLRU configuration
         run: |
           set -eu
           grep -q '^CONFIG_KSU_SUSFS=y' out/.config
@@ -194,6 +257,13 @@ jobs:
           grep -q '^CONFIG_KSU_SUSFS_TRY_UMOUNT=y' out/.config
           test -f out/fs/susfs.o
           test -f out/fs/susfs_kernel.o
+          if [ "${{ matrix.variant.mglru }}" = "true" ]; then
+            grep -qx 'CONFIG_LRU_GEN=y' out/.config || {
+              echo "susfs-mglru flavor must keep CONFIG_LRU_GEN enabled" >&2; exit 1; }
+          else
+            grep -qx '# CONFIG_LRU_GEN is not set' out/.config || {
+              echo "plain susfs flavor must have CONFIG_LRU_GEN disabled" >&2; exit 1; }
+          fi
           echo "SUSFS objects present, config verified"
 
       - name: Package AnyKernel3
@@ -210,21 +280,19 @@ jobs:
           cp out/arch/arm64/boot/$KERNEL_IMAGE .deps/AnyKernel3_staging/
 
           BUILD_DATE=$(date -u +%Y%m%d-%H%M)
-          ZIP_NAME="${RELEASE_NAME}-${KERNEL_VERSION}-${KERNEL_VARIANT}-${DEVICE_CODENAME}-${BUILD_DATE}.zip"
-          TAG_NAME="${RELEASE_NAME}-${KERNEL_VERSION}-${BUILD_DATE}"
+          ZIP_NAME="${{ matrix.variant.release }}-${KERNEL_VERSION}-${{ matrix.variant.flavor }}-${{ matrix.variant.codename }}-${BUILD_DATE}.zip"
 
           cd .deps/AnyKernel3_staging
           zip -r9 ../../artifacts/$ZIP_NAME . -x '.git*' 'README.md'
           cd ../..
 
           echo "ZIP_NAME=$ZIP_NAME" >> $GITHUB_OUTPUT
-          echo "TAG_NAME=$TAG_NAME" >> $GITHUB_OUTPUT
 
       - name: Upload Artifacts
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: kernel-build-artifacts-${{ matrix.variant.kernel_version }}
+          name: kernel-build-artifacts-${{ matrix.variant.device }}-${{ matrix.variant.kernel_version }}-${{ matrix.variant.flavor }}
           path: artifacts/*
 
   release:
@@ -259,14 +327,16 @@ jobs:
         run: |
           TAG="${{ steps.tag.outputs.tag }}"
           # If the release already exists, delete assets whose names match
-          # this branch's RELEASE_NAME so a same-day rebuild replaces them.
+          # either device's RELEASE_NAME so a same-day rebuild replaces them.
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
             echo "Release $TAG exists, cleaning old assets from this branch..."
-            gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' | \
-              grep "^${RELEASE_NAME}-" | while read -r asset; do
-                echo "  deleting $asset"
-                gh release delete-asset "$TAG" "$asset" --repo "$GITHUB_REPOSITORY" --yes || true
-              done
+            for RELEASE_NAME in "Mystralis-SUSFS-5Pro" "Mystralis-SUSFS-XT"; do
+              gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' | \
+                grep "^${RELEASE_NAME}-" | while read -r asset; do
+                  echo "  deleting $asset"
+                  gh release delete-asset "$TAG" "$asset" --repo "$GITHUB_REPOSITORY" --yes || true
+                done
+            done
           else
             echo "Release $TAG does not exist yet, will be created."
           fi
