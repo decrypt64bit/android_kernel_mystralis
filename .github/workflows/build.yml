@@ -1,4 +1,4 @@
-name: Build Mystralis Kernel
+﻿name: Build Mystralis Kernel
 
 on:
   push:
@@ -38,7 +38,7 @@ env:
   RELEASE_NAME: "Mystralis-clean-5Pro"
   KERNEL_VARIANT: "clean"
   PROTON_CLANG_REPO: "https://github.com/kdrag0n/proton-clang.git"
-  ANYKERNEL_REPO: "https://github.com/dain09/AnyKernel3.git"
+  ANYKERNEL_REPO: "https://github.com/decrypt64bit/AnyKernel3.git"
   KBUILD_BUILD_USER: "@decrypt64bit"
   KBUILD_BUILD_HOST: "ubuntu-24.04"
 
