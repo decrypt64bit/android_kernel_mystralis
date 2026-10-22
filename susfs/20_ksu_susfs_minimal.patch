@@ -1,0 +1,60 @@
+diff --git a/kernel/feature/kernel_umount.c b/kernel/feature/kernel_umount.c
+index 1d8cd81..770f8a6 100644
+--- a/kernel/feature/kernel_umount.c
++++ b/kernel/feature/kernel_umount.c
+@@ -73,6 +73,10 @@ static inline void try_umount(const char *mnt, int flags)
+ 	ksu_umount_mnt(mnt, &path, flags);
+ }
+ 
++#ifdef CONFIG_KSU_SUSFS_TRY_UMOUNT
++extern void susfs_try_umount(uid_t target_uid);
++#endif
++
+ static inline int ksu_handle_umount(struct cred *new, const struct cred *old)
+ {
+ 	uid_t new_uid = ksu_get_uid_t(new->uid);
+@@ -116,6 +120,11 @@ static inline int ksu_handle_umount(struct cred *new, const struct cred *old)
+ 
+ 	const struct cred *saved = override_creds(ksu_cred);
+ 
++#ifdef CONFIG_KSU_SUSFS_TRY_UMOUNT
++	/* run the SUSFS list first, KSU unmounts its module mounts after */
++	susfs_try_umount(new_uid);
++#endif
++
+ 	struct mount_entry *entry;
+ 	down_read(&mount_list_lock);
+ 	list_for_each_entry (entry, &mount_list, list) {
+diff --git a/kernel/hook/setuid_hook.c b/kernel/hook/setuid_hook.c
+index 9257980..d9ead0b 100644
+--- a/kernel/hook/setuid_hook.c
++++ b/kernel/hook/setuid_hook.c
+@@ -1,3 +1,7 @@
++#ifdef CONFIG_KSU_SUSFS
++#include <linux/susfs_def.h>
++#endif
++
+ static __always_inline void ksu_handle_setresuid_cred(struct cred *new, const struct cred *old)
+ {
+ 	if (!new || !old)
+@@ -21,6 +25,20 @@ static __always_inline void ksu_handle_setresuid_cred(struct cred *new, const st
+ 	if (ksu_is_allow_uid_for_current(new_uid))
+ 		goto kill_seccomp;
+ 
++#ifdef CONFIG_KSU_SUSFS
++	/*
++	 * Mark the task as a non-root user app process so the SUSFS driver
++	 * hides suspicious paths and mounts from it. Allowlisted apps must
++	 * not get this bit or their su sessions would be hidden from the
++	 * module mounts they manage.
++	 */
++	if (is_appuid(new_uid)) {
++		task_lock(current);
++		current->susfs_task_state |= TASK_STRUCT_NON_ROOT_USER_APP_PROC;
++		task_unlock(current);
++	}
++#endif
++
+ 	// Handle kernel umount
+ 	ksu_handle_umount(new, old);
+ 	return;

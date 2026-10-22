@@ -312,3 +312,103 @@ source "fs/dlm/Kconfig"
 source "fs/exfat/Kconfig"
 
 endmenu
+
+menu "KernelSU - SUSFS"
+
+config KSU_SUSFS
+	bool "KernelSU - SUSFS"
+	depends on KSU
+	default y
+	help
+	  Enable the SUSFS root hiding driver (SUSFS v1.5.5 for kernel 4.9).
+	  It is controlled by the ksu_susfs userspace tool through the
+	  prctl(0xdeadbeef, CMD_SUSFS_*, ...) ABI implemented in
+	  fs/susfs_kernel.c.
+
+	  KernelSU itself is patched by susfs/20_ksu_susfs_minimal.patch at
+	  build time to mark non-root app tasks and to run the SUSFS
+	  try_umount list when an app starts.
+
+config KSU_SUSFS_SUS_PATH
+	bool "Hide suspicious paths"
+	depends on KSU_SUSFS
+	default y
+	help
+	  Hide file and directory paths from non-root app processes.
+
+config KSU_SUSFS_SUS_MOUNT
+	bool "Hide suspicious mounts"
+	depends on KSU_SUSFS
+	default y
+	help
+	  Spoof mount ids and hide KSU mounts from non-root app processes.
+
+config KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT
+	bool "Automatically add the KSU default mounts"
+	depends on KSU_SUSFS_SUS_MOUNT
+	default y
+
+config KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT
+	bool "Automatically add bind mounts"
+	depends on KSU_SUSFS_SUS_MOUNT
+	default y
+
+config KSU_SUSFS_SUS_KSTAT
+	bool "Spoof suspicious kstat"
+	depends on KSU_SUSFS
+	default y
+	help
+	  Spoof ino/dev/size/times reported by stat for suspicious paths.
+
+config KSU_SUSFS_SUS_OVERLAYFS
+	bool "Hide the overlayfs lower layers"
+	depends on KSU_SUSFS
+	default y
+
+config KSU_SUSFS_TRY_UMOUNT
+	bool "Enable the try_umount feature"
+	depends on KSU_SUSFS
+	default y
+	help
+	  Allow userspace to queue mounts that are unmounted when an app
+	  with a hidden mount namespace starts.
+
+config KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT
+	bool "Automatically add bind mounts to the try_umount list"
+	depends on KSU_SUSFS_TRY_UMOUNT
+	default y
+
+config KSU_SUSFS_SPOOF_UNAME
+	bool "Spoof the kernel uname"
+	depends on KSU_SUSFS
+	default y
+
+config KSU_SUSFS_ENABLE_LOG
+	bool "Enable SUSFS logging"
+	depends on KSU_SUSFS
+	default y
+
+config KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
+	bool "Hide KSU and SUSFS symbols from /proc/kallsyms"
+	depends on KSU_SUSFS
+	default y
+
+config KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
+	bool "Spoof /proc/cmdline and /proc/bootconfig"
+	depends on KSU_SUSFS
+	default y
+
+config KSU_SUSFS_OPEN_REDIRECT
+	bool "Enable open redirect"
+	depends on KSU_SUSFS
+	default y
+
+config KSU_SUSFS_SUS_SU
+	bool "Enable sus_su (needs KernelSU hooks this tree does not have)"
+	depends on KSU_SUSFS && BROKEN
+	default n
+	help
+	  sus_su requires KernelSU hooks (ksu_susfs_enable_sus_su) that the
+	  backslashxx rewrite does not provide, so this is not usable here.
+
+endmenu
