@@ -48,7 +48,7 @@ env:
   # to this driver. Flash a manager built against uapi v6 alongside this
   # kernel or root will not work.
   KERNELSU_REPO: "https://github.com/backslashxx/KernelSU"
-  KERNELSU_SETUP_BRANCH: d775c08b9cde34cf3717a997c74b5e885ca60ab1
+  KERNELSU_SETUP_BRANCH: v3.3.1-22
   KBUILD_BUILD_USER: "@decrypt64bit"
   KBUILD_BUILD_HOST: "ubuntu-24.04"
 
