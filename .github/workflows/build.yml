@@ -20,24 +20,19 @@ env:
   DEVICE_CODENAME: "RMX1921"
   KERNEL_DEFCONFIG: "sdm670-perf_defconfig"
   KERNEL_IMAGE: "Image.gz-dtb"
-  # In-kernel identity. This is what uname and the OS settings show, so it
-  # carries no device suffix.
-  KERNEL_NAME: "Mystralis-SUSFS-XT"
   # GitHub-facing identity. The branch, the zip and the release tag carry the
   # device so the two devices never publish identical names.
   RELEASE_NAME: "Mystralis-SUSFS-XT"
-  KERNEL_VARIANT: "susfs-xt"
   PROTON_CLANG_REPO: "https://github.com/kdrag0n/proton-clang.git"
   ANYKERNEL_REPO: "https://github.com/decrypt64bit/AnyKernel3.git"
   # Hookless KSU driver (backslashxx/KernelSU line, KSU_TAMPER_SYSCALL_TABLE,
-  # no KPROBES dependency). Same repo mystralis and mystralis-mglru use, and
-  # deliberately NOT dain09/KernelSU: that ref no longer exists upstream, so
-  # the old `curl setup.sh | bash` path hard-failed before the compiler and
-  # every build on every branch died.
+  # no KPROBES dependency). Same repo mystralis-susfs uses, and deliberately
+  # NOT dain09/KernelSU: that ref no longer exists upstream, so the old
+  # `curl setup.sh | bash` path hard-failed before the compiler and every
+  # build on every branch died.
   #
-  # v3.3.1-21 is the latest backslashxx release (2026-10-20) and is on the
-  # uapi v6 line: KERNEL_SU_UAPI_VERSION is 6 here, where the previous pin
-  # (32669) reported 5.
+  # v3.3.1+22 is on the uapi v6 line: KERNEL_SU_UAPI_VERSION is 6 here,
+  # where the previous pin (32669) reported 5.
   #
   # Manager APK compatibility: a manager built against uapi v5 will not talk
   # to this driver. Flash a manager built against uapi v6 alongside this
@@ -49,20 +44,32 @@ env:
 
 jobs:
   build:
-    name: Build Kernel Artifacts (${{ matrix.variant.kernel_version }})
+    name: Build Kernel Artifacts (${{ matrix.variant.kernel_version }} / ${{ matrix.variant.flavor }})
     runs-on: ubuntu-24.04
     permissions:
       contents: read
     strategy:
-      # Without this, one variant failing cancels the other, and since the
+      # Without this, one variant failing cancels the others, and since the
       # release job needs the whole matrix it would never publish.
       fail-fast: false
       matrix:
         variant:
           - kernel_version: "ascension-SLMK"
+            mglru: false
+            flavor: "susfs"
+            kname: "Mystralis-SUSFS-XT"
           - kernel_version: "ascension"
-          # Boot-diagnostic control: same SLMK policy, with only MGLRU off.
-          - kernel_version: "ascension-SLMK-noMGLRU"
+            mglru: false
+            flavor: "susfs"
+            kname: "Mystralis-SUSFS-XT"
+          - kernel_version: "ascension-SLMK"
+            mglru: true
+            flavor: "susfs-mglru"
+            kname: "Mystralis-SUSFS-XT-mglru"
+          - kernel_version: "ascension"
+            mglru: true
+            flavor: "susfs-mglru"
+            kname: "Mystralis-SUSFS-XT-mglru"
 
     steps:
       - name: Checkout kernel source
@@ -84,7 +91,7 @@ jobs:
       - name: Restore ccache
         uses: hendrikmuhs/ccache-action@v1.2.23
         with:
-          key: ${{ runner.os }}-sdm670-kernel
+          key: ${{ runner.os }}-sdm670-kernel-rxt-susfs
           max-size: 10G
 
       - name: Install Host Dependencies
@@ -139,12 +146,14 @@ jobs:
             CROSS_COMPILE="$TC_PATH/aarch64-linux-gnu-" \
             $KERNEL_DEFCONFIG
 
-          if [ "$KERNEL_VERSION" = "ascension-SLMK-noMGLRU" ]; then
+          # The MGLRU mm/ backport is compiled in on this tree; the plain
+          # susfs flavor turns it off at config level, susfs-mglru keeps it.
+          if [ "${{ matrix.variant.mglru }}" = "false" ]; then
             ./scripts/config --file out/.config --disable LRU_GEN
           fi
 
           ./scripts/config --file out/.config \
-             --set-str CONFIG_LOCALVERSION "-${KERNEL_NAME}-${KERNEL_VERSION}"
+             --set-str CONFIG_LOCALVERSION "-${{ matrix.variant.kname }}-${KERNEL_VERSION}"
 
           # SUSFS v1.5.5 (fs/Kconfig menu "KernelSU - SUSFS"). sus_su stays
           # off: it needs KernelSU hooks the backslashxx rewrite lacks.
@@ -170,19 +179,18 @@ jobs:
             CROSS_COMPILE_ARM32="$TC_PATH/arm-linux-gnueabi-" \
             olddefconfig
 
-          if [ "$KERNEL_VERSION" = "ascension-SLMK-noMGLRU" ]; then
-            grep -qx '# CONFIG_LRU_GEN is not set' out/.config || {
-              echo "MGLRU control variant must have CONFIG_LRU_GEN disabled" >&2
+          if [ "${{ matrix.variant.mglru }}" = "true" ]; then
+            grep -qx 'CONFIG_LRU_GEN=y' out/.config || {
+              echo "susfs-mglru flavor must keep CONFIG_LRU_GEN enabled" >&2
               exit 1
             }
           else
-            grep -qx 'CONFIG_LRU_GEN=y' out/.config || {
-              echo "CONFIG_LRU_GEN must be enabled in the normal variants" >&2
+            grep -qx '# CONFIG_LRU_GEN is not set' out/.config || {
+              echo "plain susfs flavor must have CONFIG_LRU_GEN disabled" >&2
               exit 1
             }
           fi
-          if [ "$KERNEL_VERSION" = "ascension-SLMK" ] || \
-             [ "$KERNEL_VERSION" = "ascension-SLMK-noMGLRU" ]; then
+          if [ "$KERNEL_VERSION" = "ascension-SLMK" ]; then
             grep -qx 'CONFIG_ANDROID_SIMPLE_LMK=y' out/.config || {
               echo "Simple LMK variant unexpectedly disabled" >&2
               exit 1
@@ -193,7 +201,7 @@ jobs:
             }
           else
             grep -qx 'CONFIG_ANDROID_LOW_MEMORY_KILLER=y' out/.config || {
-              echo "Classic LMK diagnostic variant unexpectedly disabled" >&2
+              echo "Classic LMK variant unexpectedly disabled" >&2
               exit 1
             }
           fi
@@ -235,21 +243,19 @@ jobs:
           cp out/arch/arm64/boot/$KERNEL_IMAGE .deps/AnyKernel3_staging/
 
           BUILD_DATE=$(date -u +%Y%m%d-%H%M)
-          ZIP_NAME="${RELEASE_NAME}-${KERNEL_VERSION}-${KERNEL_VARIANT}-${DEVICE_CODENAME}-${BUILD_DATE}.zip"
-          TAG_NAME="${RELEASE_NAME}-${KERNEL_VERSION}-${BUILD_DATE}"
+          ZIP_NAME="${RELEASE_NAME}-${KERNEL_VERSION}-${{ matrix.variant.flavor }}-${DEVICE_CODENAME}-${BUILD_DATE}.zip"
 
           cd .deps/AnyKernel3_staging
           zip -r9 ../../artifacts/$ZIP_NAME . -x '.git*' 'README.md'
           cd ../..
 
           echo "ZIP_NAME=$ZIP_NAME" >> $GITHUB_OUTPUT
-          echo "TAG_NAME=$TAG_NAME" >> $GITHUB_OUTPUT
 
       - name: Upload Artifacts
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: kernel-build-artifacts-${{ matrix.variant.kernel_version }}
+          name: kernel-build-artifacts-${{ matrix.variant.kernel_version }}-${{ matrix.variant.flavor }}
           path: artifacts/*
 
   release:
