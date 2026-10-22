@@ -1,17 +1,9 @@
-﻿name: Build Mystralis XT MGLRU Kernel
+﻿name: Build Mystralis XT SUSFS Kernel
 
 on:
   push:
     branches:
-      - mystralis
-      - mystralis-clean
-      - mystralis-mglru
-      - mystralis-rxt
-      - mystralis-rxt-mglru
-      - rebel-5pro
-      - rebel-5pro-mglru
-      - rebel-xt
-      - rebel-xt-mglru
+      - mystralis-rxt-susfs
   workflow_dispatch:
     inputs:
       publish_release:
@@ -30,11 +22,11 @@ env:
   KERNEL_IMAGE: "Image.gz-dtb"
   # In-kernel identity. This is what uname and the OS settings show, so it
   # carries no device suffix.
-  KERNEL_NAME: "Mystralis-XT-mglru"
+  KERNEL_NAME: "Mystralis-SUSFS-XT"
   # GitHub-facing identity. The branch, the zip and the release tag carry the
   # device so the two devices never publish identical names.
-  RELEASE_NAME: "Mystralis-XT-mglru"
-  KERNEL_VARIANT: "rxt-mglru"
+  RELEASE_NAME: "Mystralis-SUSFS-XT"
+  KERNEL_VARIANT: "susfs-xt"
   PROTON_CLANG_REPO: "https://github.com/kdrag0n/proton-clang.git"
   ANYKERNEL_REPO: "https://github.com/decrypt64bit/AnyKernel3.git"
   # Hookless KSU driver (backslashxx/KernelSU line, KSU_TAMPER_SYSCALL_TABLE,
@@ -125,6 +117,14 @@ jobs:
           echo "--- Makefile tail ---"; tail -3 "$DRIVER_DIR/Makefile"
           echo "--- Kconfig around endmenu ---"; grep -n -B1 -A1 'kernelsu' "$DRIVER_DIR/Kconfig"
 
+      - name: Apply SUSFS KernelSU hooks
+        run: |
+          set -eu
+          # SUSFS v1.5.5 needs two KernelSU-side hooks (mark non-root app
+          # tasks, run the SUSFS try_umount list); everything else lives in
+          # fs/susfs_kernel.c in this tree.
+          git -C KernelSU apply --verbose "$GITHUB_WORKSPACE/susfs/20_ksu_susfs_minimal.patch"
+
       - name: Configure and Build Kernel
         env:
           KERNEL_VERSION: ${{ matrix.variant.kernel_version }}
@@ -145,6 +145,24 @@ jobs:
 
           ./scripts/config --file out/.config \
              --set-str CONFIG_LOCALVERSION "-${KERNEL_NAME}-${KERNEL_VERSION}"
+
+          # SUSFS v1.5.5 (fs/Kconfig menu "KernelSU - SUSFS"). sus_su stays
+          # off: it needs KernelSU hooks the backslashxx rewrite lacks.
+          ./scripts/config --file out/.config \
+             --enable CONFIG_KSU_SUSFS \
+             --enable CONFIG_KSU_SUSFS_SUS_PATH \
+             --enable CONFIG_KSU_SUSFS_SUS_MOUNT \
+             --enable CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT \
+             --enable CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT \
+             --enable CONFIG_KSU_SUSFS_SUS_KSTAT \
+             --enable CONFIG_KSU_SUSFS_SUS_OVERLAYFS \
+             --enable CONFIG_KSU_SUSFS_TRY_UMOUNT \
+             --enable CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT \
+             --enable CONFIG_KSU_SUSFS_SPOOF_UNAME \
+             --enable CONFIG_KSU_SUSFS_ENABLE_LOG \
+             --enable CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
+             --enable CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
+             --enable CONFIG_KSU_SUSFS_OPEN_REDIRECT
 
           make O=out ARCH=arm64 \
             CC="$TC_PATH/clang" \
@@ -192,6 +210,16 @@ jobs:
             CROSS_COMPILE="$TC_PATH/aarch64-linux-gnu-" \
             CROSS_COMPILE_ARM32="$TC_PATH/arm-linux-gnueabi-" \
             LLVM=1 LLVM_IAS=1
+
+      - name: Verify SUSFS is built in
+        run: |
+          set -eu
+          grep -q '^CONFIG_KSU_SUSFS=y' out/.config
+          grep -q '^CONFIG_KSU_SUSFS_SUS_MOUNT=y' out/.config
+          grep -q '^CONFIG_KSU_SUSFS_TRY_UMOUNT=y' out/.config
+          test -f out/fs/susfs.o
+          test -f out/fs/susfs_kernel.o
+          echo "SUSFS objects present, config verified"
 
       - name: Package AnyKernel3
         id: package
