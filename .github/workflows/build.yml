@@ -51,7 +51,11 @@ env:
   # to this driver. Flash a manager built against uapi v6 alongside this
   # kernel or root will not work.
   KERNELSU_REPO: "https://github.com/backslashxx/KernelSU"
-  KERNELSU_SETUP_BRANCH: v3.3.1-22
+  # backslashxx deletes/renames release tags constantly (v3.3.1+22 ->
+  # v3.3.1-22 -> deleted). Pin by COMMIT SHA instead: this is the exact
+  # driver commit the device-validated builds use (was tagged v3.3.1+22;
+  # KSU_VERSION 32700, uapi v6). Immune to upstream tag churn.
+  KSU_COMMIT: 82624fd280a45a7c79e573e04b5d234db5239bb8
   KBUILD_BUILD_USER: "@decrypt64bit"
   KBUILD_BUILD_HOST: "ubuntu-24.04"
 
@@ -115,7 +119,11 @@ jobs:
           set -eu
           # Inline equivalent of kernel/setup.sh, but cloning KERNELSU_REPO
           # instead of the backslashxx URL that script hardcodes.
-          git clone --depth 1 -b "$KERNELSU_SETUP_BRANCH" "$KERNELSU_REPO" KernelSU
+          # Inline equivalent of kernel/setup.sh, but cloning KERNELSU_REPO
+          # and checking out the pinned commit (tag churn survives this).
+          git clone --depth 1 "$KERNELSU_REPO" KernelSU
+          git -C KernelSU fetch --depth 1 origin "$KSU_COMMIT"
+          git -C KernelSU checkout --detach "$KSU_COMMIT"
           git -C KernelSU rev-parse HEAD
           DRIVER_DIR=drivers
           test -d "$DRIVER_DIR" || { echo "no $DRIVER_DIR"; exit 1; }
