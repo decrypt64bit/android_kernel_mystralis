@@ -35,7 +35,9 @@ env:
   # v3.3.1-22 -> deleted). Pin by COMMIT SHA instead: this is the exact
   # driver commit the device-validated builds use (was tagged v3.3.1+22;
   # KSU_VERSION 32700, uapi v6). Immune to upstream tag churn.
-  KSU_COMMIT: 82624fd280a45a7c79e573e04b5d234db5239bb8
+  # v3.3.1-47 (Nov 2026): KSU_VERSION 32725, uapi v6 (manager-compatible),
+  # SUSFS minimal patch verified to apply cleanly.
+  KSU_COMMIT: 53fd92f39e38f8666f246195eb72581caf74c22c
   KBUILD_BUILD_USER: "@decrypt64bit"
   KBUILD_BUILD_HOST: "ubuntu-24.04"
 
