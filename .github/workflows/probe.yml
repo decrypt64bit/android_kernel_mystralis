@@ -1,9 +1,0 @@
-name: Probe
-on:
-  workflow_dispatch:
-jobs:
-  p:
-    runs-on: ubuntu-24.04
-    steps:
-      - name: hi
-        run: echo alive
