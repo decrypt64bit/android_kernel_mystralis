@@ -13,7 +13,10 @@ on:
         type: boolean
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  # v2 suffix: the old group name is held by zombie runs that GitHub
+  # refuses to cancel or delete, which blocked every later run on these
+  # branches (concurrency group collision). A new name frees the queue.
+  group: ${{ github.workflow }}-${{ github.ref }}-v2
   cancel-in-progress: true
 
 env:
