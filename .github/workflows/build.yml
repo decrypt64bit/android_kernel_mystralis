@@ -37,6 +37,8 @@ env:
   # GitHub-facing identity. The branch, the zip and the release tag carry the
   # device so the two devices never publish identical names.
   RELEASE_NAME: "Mystralis-XT-mglru"
+  # Exact prefix of this branch's assets (see mystralis-rxt note).
+  CLEAN_PREFIX: "Mystralis-XT-mglru-ascension"
   KERNEL_VARIANT: "rxt-mglru"
   PROTON_CLANG_REPO: "https://github.com/kdrag0n/proton-clang.git"
   ANYKERNEL_REPO: "https://github.com/decrypt64bit/AnyKernel3.git"
@@ -273,7 +275,7 @@ jobs:
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
             echo "Release $TAG exists, cleaning old assets from this branch..."
             gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' | \
-              grep "^${RELEASE_NAME}-" | while read -r asset; do
+              grep "^${CLEAN_PREFIX}" | while read -r asset; do
                 echo "  deleting $asset"
                 gh release delete-asset "$TAG" "$asset" --repo "$GITHUB_REPOSITORY" --yes || true
               done
