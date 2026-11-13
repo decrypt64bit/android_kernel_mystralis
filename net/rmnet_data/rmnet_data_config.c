@@ -934,6 +934,9 @@ int _rmnet_set_logical_endpoint_config(struct net_device *dev,
 
 	/* Explicitly hold a reference to the egress device */
 	dev_hold(epconfig_l->egress_dev);
+	LOGH("egress HOLD dev=%s egress=%s id=%d", dev->name,
+	     epconfig_l->egress_dev ? epconfig_l->egress_dev->name : "(null)",
+	     config_id);
 	return RMNET_CONFIG_OK;
 }
 
@@ -968,6 +971,9 @@ int _rmnet_unset_logical_endpoint_config(struct net_device *dev,
 		return RMNET_CONFIG_NO_SUCH_DEVICE;
 
 	/* Explicitly release the reference from the egress device */
+	LOGH("egress PUT dev=%s egress=%s id=%d", dev->name,
+	     epconfig_l->egress_dev ? epconfig_l->egress_dev->name : "(null)",
+	     config_id);
 	dev_put(epconfig_l->egress_dev);
 	memset(epconfig_l, 0, sizeof(struct rmnet_logical_ep_conf_s));
 
@@ -1189,6 +1195,7 @@ static void rmnet_force_unassociate_device(struct net_device *dev)
 		return;
 
 	if (!_rmnet_is_physical_endpoint_associated(dev)) {
+		LOGH("skip unassociate for non-physical dev=%s", dev->name);
 		LOGM("%s", "Called on unassociated device, skipping");
 		return;
 	}
