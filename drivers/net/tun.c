@@ -63,6 +63,7 @@
 #include <linux/if_vlan.h>
 #include <linux/crc32.h>
 #include <linux/nsproxy.h>
+#include <linux/workqueue.h>
 #include <linux/virtio_net.h>
 #include <linux/rcupdate.h>
 #include <net/net_namespace.h>
@@ -541,6 +542,44 @@ static void tun_cleanup_tx_array(struct tun_file *tfile)
 	}
 }
 
+/*
+ * Deferred teardown. The closing thread must never enter netdev_wait_allrefs():
+ * that loop is unbounded when a reference holder leaks, and it re-acquires
+ * rtnl_lock() every second to rebroadcast UNREGISTER, so a stuck device both
+ * parks the caller in D state and contends the lock every network operation
+ * needs. Running the unregister here keeps close() responsive and the owning
+ * app killable; if a reference never drops, a kworker parks instead.
+ */
+static struct workqueue_struct *tun_unreg_wq;
+
+struct tun_deferred_unregister {
+	struct work_struct	work;
+	struct net_device	*dev;
+};
+
+static void tun_deferred_unregister_fn(struct work_struct *work)
+{
+	struct tun_deferred_unregister *d =
+		container_of(work, struct tun_deferred_unregister, work);
+	struct net_device *dev = d->dev;
+
+	rtnl_lock();
+	if (dev->reg_state == NETREG_REGISTERED) {
+		if (dev->flags & IFF_UP)
+			__dev_change_flags(dev, dev->flags & ~IFF_UP);
+		/* Drop our own reference before the todo drain, or the drain
+		 * waits on the reference this worker holds.
+		 */
+		dev_put(dev);
+		unregister_netdevice(dev);
+	} else {
+		dev_put(dev);
+	}
+	rtnl_unlock();
+
+	kfree(d);
+}
+
 static void __tun_detach(struct tun_file *tfile, bool clean)
 {
 	struct tun_file *ntfile;
@@ -581,52 +620,27 @@ static void __tun_detach(struct tun_file *tfile, bool clean)
 			if (!(tun->flags & IFF_PERSIST) &&
 			    tun->dev->reg_state == NETREG_REGISTERED) {
 				/*
-				 * Enter unregister unconditionally.
-				 *
-				 * The remaining references are legitimate
-				 * and balanced: they are dominated by tun's
-				 * own tun_get()/tun_put() pairs around
-				 * read/poll/write on /dev/net/tun, plus dst
-				 * and neighbour cache entries. Requiring
-				 * the count to be zero here is self
-				 * blocking: the count can only reach zero
-				 * via the drain inside unregister, which is
-				 * only reached once this gate is passed.
-				 *
-				 * unregister_netdevice() is written for
-				 * this. It does not require a zero count;
-				 * it defers the device to the netdev todo,
-				 * where netdev_wait_allrefs() waits the
-				 * count out (net/core/dev.c). The wait runs
-				 * without rtnl_lock, and rtnl_lock has
-				 * already been dropped by tun_detach() by
-				 * the time the todo executes, so a device
-				 * still holding references cannot stall
-				 * route operations behind this call.
-				 *
-				 * The wait is bounded by how long the last
-				 * holder takes, and netdev_wait_allrefs()
-				 * reports a stuck device in dmesg every 10s
-				 * if that is ever violated.
+				 * Hand teardown to tun_unreg_wq. No refcount
+				 * gate: the references can only drop via the
+				 * drain inside unregister, so gating on zero
+				 * here would be self-blocking.
 				 */
+				struct tun_deferred_unregister *d;
 
-				/*
-				 * Bring the interface down first. This flushes
-				 * the routes pointing at the device, which is
-				 * what lets the reference count in
-				 * netdev_wait_allrefs() actually reach zero.
-				 *
-				 * Order matters: unregister_netdevice() marks the
-				 * device NETREG_UNREGISTERING and defers the
-				 * free to the netdev todo, so a later
-				 * __dev_change_flags() here would be a use of a
-				 * device that is already being torn down.
-				 */
-				if (tun->dev->flags & IFF_UP)
-					__dev_change_flags(tun->dev,
-							   tun->dev->flags & ~IFF_UP);
-
-				unregister_netdevice(tun->dev);
+				d = kmalloc(sizeof(*d), GFP_KERNEL);
+				if (d) {
+					INIT_WORK(&d->work,
+						  tun_deferred_unregister_fn);
+					dev_hold(tun->dev);
+					d->dev = tun->dev;
+					queue_work(tun_unreg_wq, &d->work);
+				} else {
+					/* Must not leak the device on OOM. */
+					if (tun->dev->flags & IFF_UP)
+						__dev_change_flags(tun->dev,
+								   tun->dev->flags & ~IFF_UP);
+					unregister_netdevice(tun->dev);
+				}
 			}
 		}
 		tun_cleanup_tx_array(tfile);
@@ -2687,6 +2701,15 @@ static int __init tun_init(void)
 	pr_info("%s, %s\n", DRV_DESCRIPTION, DRV_VERSION);
 	pr_info("%s\n", DRV_COPYRIGHT);
 
+	/* max_active 0 (unbounded): a parked teardown must not block
+	 * subsequent ones.
+	 */
+	tun_unreg_wq = alloc_workqueue("tun_unreg", WQ_UNBOUND | WQ_MEM_RECLAIM, 0);
+	if (!tun_unreg_wq) {
+		ret = -ENOMEM;
+		goto err_linkops;
+	}
+
 	ret = rtnl_link_register(&tun_link_ops);
 	if (ret) {
 		pr_err("Can't register link_ops\n");
@@ -2709,6 +2732,7 @@ err_linkops:
 
 static void tun_cleanup(void)
 {
+	destroy_workqueue(tun_unreg_wq);
 	misc_deregister(&tun_miscdev);
 	rtnl_link_unregister(&tun_link_ops);
 	unregister_netdevice_notifier(&tun_notifier_block);
