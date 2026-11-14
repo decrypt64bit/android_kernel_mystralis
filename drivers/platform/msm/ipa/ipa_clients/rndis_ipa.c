@@ -27,6 +27,9 @@
 #include <linux/random.h>
 #include <linux/rndis_ipa.h>
 #include <linux/workqueue.h>
+#include <linux/delay.h>
+#include <linux/slab.h>
+#include <linux/rtnetlink.h>
 #include "../ipa_common_i.h"
 #ifdef CONFIG_IPA3
 #include "../ipa_v3/ipa_pm.h"
@@ -639,6 +642,17 @@ int rndis_ipa_init(struct ipa_usb_init_params *params)
 	RNDIS_IPA_DEBUG("set carrier off until pipes are connected\n");
 
 	result = register_netdev(net);
+	/* A deferred cleanup may briefly still hold the old name. Retry only
+	 * on -EEXIST; any other error is a real failure.
+	 */
+	if (result == -EEXIST) {
+		int tries;
+
+		for (tries = 0; tries < 5 && result == -EEXIST; tries++) {
+			msleep(200);
+			result = register_netdev(net);
+		}
+	}
 	if (result) {
 		RNDIS_IPA_ERROR("register_netdev failed: %d\n", result);
 		goto fail_register_netdev;
@@ -1381,6 +1395,53 @@ int rndis_ipa_pipe_disconnect_notify(void *private)
 }
 EXPORT_SYMBOL(rndis_ipa_pipe_disconnect_notify);
 
+/*
+ * Containment: the caller of rndis_ipa_cleanup() is the USB gadget HAL or adbd.
+ * unregister_netdev() drains the netdev todo inline, and netdev_wait_allrefs()
+ * is unbounded when a reference holder leaks, so a leaked reference freezes
+ * whichever userspace service called us - taking USB down with it. Run the
+ * teardown on a workqueue so the caller returns immediately; if a reference
+ * never drops, a kworker parks instead. This does not fix the leak.
+ */
+static struct workqueue_struct *rndis_ipa_wq;
+
+struct rndis_ipa_deferred_cleanup {
+	struct work_struct	work;
+	struct net_device	*net;
+};
+
+static void rndis_ipa_deferred_cleanup_fn(struct work_struct *work)
+{
+	struct rndis_ipa_deferred_cleanup *d =
+		container_of(work, struct rndis_ipa_deferred_cleanup, work);
+	struct net_device *net = d->net;
+	struct rndis_ipa_dev *ctx = netdev_priv(net);
+	unsigned long flags;
+	int next_state;
+
+	rtnl_lock();
+	if (net->reg_state == NETREG_REGISTERED) {
+		/* Drop our own reference before the todo drain, or the drain
+		 * waits on the reference this worker holds.
+		 */
+		dev_put(net);
+		unregister_netdevice(net);
+	} else {
+		dev_put(net);
+	}
+	rtnl_unlock();
+
+	/* Preserve the original post-unregister sequence exactly. */
+	spin_lock_irqsave(&ctx->state_lock, flags);
+	next_state = rndis_ipa_next_state(ctx->state, RNDIS_IPA_CLEANUP);
+	if (next_state != RNDIS_IPA_INVALID)
+		ctx->state = next_state;
+	spin_unlock_irqrestore(&ctx->state_lock, flags);
+
+	free_netdev(net);
+	kfree(d);
+}
+
 /**
  * rndis_ipa_cleanup() - unregister the network interface driver and free
  *  internal data structs.
@@ -1449,21 +1510,28 @@ void rndis_ipa_cleanup(void *private)
 	rndis_ipa_debugfs_destroy(rndis_ipa_ctx);
 	RNDIS_IPA_DEBUG("debugfs remove was done\n");
 
-	unregister_netdev(rndis_ipa_ctx->net);
-	RNDIS_IPA_DEBUG("netdev unregistered\n");
+	{
+		struct rndis_ipa_deferred_cleanup *d;
 
-	spin_lock_irqsave(&rndis_ipa_ctx->state_lock, flags);
-	next_state = rndis_ipa_next_state(rndis_ipa_ctx->state,
-					  RNDIS_IPA_CLEANUP);
-	if (next_state == RNDIS_IPA_INVALID) {
-		spin_unlock_irqrestore(&rndis_ipa_ctx->state_lock, flags);
-		RNDIS_IPA_ERROR("use disconnect()before clean()\n");
-		return;
+		d = kmalloc(sizeof(*d), GFP_KERNEL);
+		if (d) {
+			INIT_WORK(&d->work, rndis_ipa_deferred_cleanup_fn);
+			dev_hold(rndis_ipa_ctx->net);
+			d->net = rndis_ipa_ctx->net;
+			queue_work(rndis_ipa_wq, &d->work);
+		} else {
+			/* OOM: fall back to the original inline behaviour. */
+			unregister_netdev(rndis_ipa_ctx->net);
+			spin_lock_irqsave(&rndis_ipa_ctx->state_lock, flags);
+			next_state = rndis_ipa_next_state(rndis_ipa_ctx->state,
+							  RNDIS_IPA_CLEANUP);
+			if (next_state != RNDIS_IPA_INVALID)
+				rndis_ipa_ctx->state = next_state;
+			spin_unlock_irqrestore(&rndis_ipa_ctx->state_lock, flags);
+			free_netdev(rndis_ipa_ctx->net);
+		}
 	}
-	rndis_ipa_ctx->state = next_state;
-	spin_unlock_irqrestore(&rndis_ipa_ctx->state_lock, flags);
-	free_netdev(rndis_ipa_ctx->net);
-	pr_info("RNDIS_IPA NetDev was cleaned\n");
+	pr_info("RNDIS_IPA NetDev cleanup deferred\n");
 
 	RNDIS_IPA_LOG_EXIT();
 }
@@ -2711,12 +2779,19 @@ static int rndis_ipa_init_module(void)
 	if (ipa_rndis_logbuf == NULL)
 		RNDIS_IPA_DEBUG("failed to create IPC log, continue...\n");
 
+	/* max_active 0: a parked teardown must not block later ones. */
+	rndis_ipa_wq = alloc_workqueue("rndis_ipa_cleanup",
+				       WQ_UNBOUND | WQ_MEM_RECLAIM, 0);
+	if (!rndis_ipa_wq)
+		return -ENOMEM;
+
 	pr_info("RNDIS_IPA module is loaded.");
 	return 0;
 }
 
 static void rndis_ipa_cleanup_module(void)
 {
+	destroy_workqueue(rndis_ipa_wq);
 	if (ipa_rndis_logbuf)
 		ipc_log_context_destroy(ipa_rndis_logbuf);
 	ipa_rndis_logbuf = NULL;
