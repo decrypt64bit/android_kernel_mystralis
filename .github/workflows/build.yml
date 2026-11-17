@@ -62,7 +62,7 @@ env:
   # KSU_VERSION 32700, uapi v6). Immune to upstream tag churn.
   # v3.3.1-47 (Nov 2026): KSU_VERSION 32725, uapi v6 (manager-compatible),
   # SUSFS minimal patch verified to apply cleanly.
-  KSU_COMMIT: 53fd92f39e38f8666f246195eb72581caf74c22c
+  KSU_COMMIT: aeb3463a64c003c202623f6800c0f3585ac2f1d4
   KBUILD_BUILD_USER: "@decrypt64bit"
   KBUILD_BUILD_HOST: "ubuntu-24.04"
 
