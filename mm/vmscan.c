@@ -167,9 +167,13 @@ int vm_swappiness = 60;
 
 #ifdef CONFIG_OPLUS_MM_HACKS
 /*
- * Direct reclaim swappiness, values range from 0 .. 60. Higher means more swappy.
+ * Direct reclaim swappiness, values range from 0 .. 200 (OPLUS scale, where
+ * 100 balances anon and file). Match the global swappiness default: at 60
+ * direct reclaim evicted file pages (app code) preferentially, which refaulted
+ * and drove a thrash loop - measured ~17800 pgscan_direct/s and ~28 allocstall/s
+ * versus ~11/s and ~0.09/s at 160, with foreground kills dropping to adj 200.
  */
-int direct_vm_swappiness = 60;
+int direct_vm_swappiness = 160;
 #endif /* CONFIG_OPLUS_MM_HACKS */
 
 /*
